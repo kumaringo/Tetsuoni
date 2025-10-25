@@ -3,12 +3,12 @@ import os
 import io
 import json
 import base64
-import requests 
+import requests
 
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageSendMessage, TextMessage
+from linebot.models import MessageEvent, TextMessage, ImageSendMessage, TextSendMessage
 
 from PIL import Image, ImageDraw
 
@@ -16,11 +16,9 @@ from PIL import Image, ImageDraw
 from station_data import STATION_COORDINATES
 
 # --- 環境変数設定 (ImgBB用) ---
-# LINEの認証情報
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
-# 画像ホスティングサービス ImgBB の APIキー (Imgurの環境変数名を流用)
-IMGBB_API_KEY = os.getenv('IMGUR_CLIENT_ID')
+IMGBB_API_KEY = os.getenv('IMGUR_CLIENT_ID') # ImgBBのAPIキーとして使用
 
 app = Flask(__name__)
 
@@ -32,7 +30,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 def upload_image_to_imgbb(image_io):
     """
     PIL Image IOをImgBBにアップロードし、公開URLを返す
-    :param image_io: BytesIOオブジェクト (PNG形式)
+    :param image_io: BytesIOオブジェクト (JPEG形式)
     :return: 公開画像URL (str) または None
     """
     if not IMGBB_API_KEY:
@@ -40,28 +38,27 @@ def upload_image_to_imgbb(image_io):
         return None
 
     # BytesIOからBase64文字列にエンコード
-    image_io.seek(0) # ポインタを先頭に戻す
+    image_io.seek(0)
     base64_image = base64.b64encode(image_io.read()).decode('utf-8')
 
-    # ImgBBアップロードエンドポイント
     url = "https://api.imgbb.com/1/upload"
     
-    # リクエストパラメータ
     data = {
         'key': IMGBB_API_KEY,
         'image': base64_image,
-        'name': 'tetsuoni_rosenzu.png' # ファイル名
+        'name': 'tetsuoni_rosenzu.jpeg' # ファイル名をJPEGに変更
     }
 
     try:
+        # APIリクエストを指数関数的バックオフで実行 (省略)
         response = requests.post(url, data=data, timeout=10)
-        response.raise_for_status() # HTTPエラーが発生した場合に例外を発生させる
+        response.raise_for_status()
         
         result = response.json()
         
         if result.get('success'):
             image_url = result['data']['url']
-            # LINEの仕様により、画像URLとプレビューURLは同じでOK
+            # ImgBBは常に小さなサムネイルURLも返すが、ここではフルサイズのURLを使用
             return image_url
         else:
             print(f"ImgBB upload failed. Error: {result.get('error', 'Unknown error')}")
@@ -84,32 +81,26 @@ def draw_station_pin(station_name, target_station):
     :return: BytesIOオブジェクト
     """
     try:
-        # 画像のロード（Botの実行ファイルと同じディレクトリにあることを想定）
-        # 'Rosenzu.png' はアップロード済みのファイル名と一致していることを前提とします
         image = Image.open("Rosenzu.png").convert("RGB")
     except FileNotFoundError:
-        # 路線図が見つからない場合はエラーメッセージを返す
         print("Error: Rosenzu.png not found. Please ensure 'Rosenzu.png' is in the same directory.")
         return None
 
     draw = ImageDraw.Draw(image)
 
-    # 座標の取得
     if station_name not in STATION_COORDINATES:
-        print(f"Error: Coordinates for {station_name} not found in STATION_COORDINATES.")
+        print(f"Error: Coordinates for {station_name} not found.")
         return None
         
     x, y = STATION_COORDINATES[station_name]
 
-    # ピンの色とサイズを設定
     pin_radius = 20
-    
+    # ターゲット駅は黄色 (ここではデモ用として未使用)
     if target_station:
-        # ターゲット駅 (黄色で目立つように)
         color = "yellow" 
         radius = pin_radius * 1.5
+    # 現在のプレイヤー位置は赤
     else:
-        # 現在のプレイヤー位置 (赤色)
         color = "red"
         radius = pin_radius 
     
@@ -121,22 +112,19 @@ def draw_station_pin(station_name, target_station):
         width=4
     )
     
-    # 結果をBytesIOに保存 (LINE送信のため)
+    # 結果をBytesIOにJPEG形式で保存
     img_io = io.BytesIO()
-    image.save(img_io, format='PNG')
+    image.save(img_io, format='JPEG') # 互換性の高いJPEGを使用
     img_io.seek(0)
     return img_io
 
 # --- LINE Webhook処理 ---
 @app.route("/callback", methods=['POST'])
 def callback():
-    # 署名ヘッダーを取得
     signature = request.headers.get('X-Line-Signature', '')
-    # リクエストボディを取得
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
 
-    # 署名検証
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
@@ -150,83 +138,87 @@ def callback():
 def handle_message(event):
     msg = event.message.text
     
-    # --- デバッグ用: 画像テストコマンド ---
-    if msg == '画像テスト':
-        # ターゲット駅（例：大手町）と現在地（例：渋谷）を設定
-        # 実際にはFirestoreからデータを取得しますが、ここではデモ用
+    # ユーザーが入力した駅名がSTATION_COORDINATESにあるかチェック
+    if msg in STATION_COORDINATES:
+        station_name = msg
+        
+        # 1. 駅にピンを描画した画像を生成
+        # target_station=False (現在地を示す赤ピン) として描画
+        image_io = draw_station_pin(station_name, False)
+        
+        if image_io:
+            # 2. ImgBBに画像をアップロードし、URLを取得
+            image_url = upload_image_to_imgbb(image_io)
+
+            if image_url:
+                # 3. LINEに画像として返信
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    ImageSendMessage(
+                        original_content_url=image_url,
+                        preview_image_url=image_url
+                    )
+                )
+            else:
+                # アップロード失敗時のメッセージ
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="画像アップロードに失敗しました。APIキーを確認してください。")
+                )
+        else:
+            # 画像生成失敗時のメッセージ
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"画像生成に失敗しました。路線図ファイル 'Rosenzu.png' が見つからない可能性があります。")
+            )
+
+    # デバッグ用: 画像テストコマンド (削除またはコメントアウト推奨)
+    elif msg == '画像テスト':
+        # このブロックはデバッグ用であり、通常はゲームロジックの一部ではありません。
         current_station = "渋谷" 
         target_station = "大手町" 
 
-        # 1. 路線図画像にピンを描画
-        # この関数は、現在地とターゲットを両方描画するように機能拡張します。
+        # デモ画像を生成 (赤ピンと黄ピンの両方を描画)
+        image_io = draw_station_pin(current_station, False)
         
-        # 最初にベースの路線図を取得
-        try:
-            image = Image.open("Rosenzu.png").convert("RGB")
-        except FileNotFoundError:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextMessage(text="エラー: 路線図ファイル(Rosenzu.png)が見つかりません。")
+        if image_io:
+            # BytesIOをPIL Imageに変換し、ターゲット駅を描画
+            image_io.seek(0)
+            img = Image.open(image_io).convert("RGB")
+            draw = ImageDraw.Draw(img)
+            
+            x_target, y_target = STATION_COORDINATES[target_station]
+            radius = 20 * 1.5
+            color = "yellow"
+            
+            draw.ellipse(
+                (x_target - radius, y_target - radius, x_target + radius, y_target + radius),
+                fill=color,
+                outline="black",
+                width=4
             )
-            return
 
-        draw = ImageDraw.Draw(image)
+            final_img_io = io.BytesIO()
+            img.save(final_img_io, format='JPEG')
+            
+            image_url = upload_image_to_imgbb(final_img_io)
 
-        # 座標の定義
-        stations_to_plot = {
-            current_station: {"target": False, "color": "red", "radius_scale": 1.0},
-            target_station: {"target": True, "color": "yellow", "radius_scale": 1.5}
-        }
-        
-        for station_name, info in stations_to_plot.items():
-            if station_name in STATION_COORDINATES:
-                x, y = STATION_COORDINATES[station_name]
-                pin_radius = 20
-                radius = pin_radius * info["radius_scale"]
-                color = info["color"]
-                
-                # ピンの描画
-                draw.ellipse(
-                    (x - radius, y - radius, x + radius, y + radius),
-                    fill=color,
-                    outline="black" if info["target"] else "white",
-                    width=4
+            if image_url:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
                 )
             else:
-                print(f"Warning: Station {station_name} coordinates missing.")
-
-
-        # 2. 最終画像をBytesIOに保存
-        final_img_io = io.BytesIO()
-        image.save(final_img_io, format='PNG')
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="画像テストアップロード失敗。"))
         
-        # 3. ImgBBにアップロード
-        uploaded_url = upload_image_to_imgbb(final_img_io)
-
-        if uploaded_url:
-            # 4. LINEに画像メッセージを送信
-            line_bot_api.reply_message(
-                event.reply_token,
-                ImageSendMessage(
-                    original_content_url=uploaded_url,
-                    preview_image_url=uploaded_url # LINEの仕様上、同じURLでOK
-                )
-            )
-        else:
-            # アップロード失敗時の処理
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextMessage(text="画像のアップロードに失敗しました。ImgBBのAPIキーを確認してください。")
-            )
-    
-    # --- 通常の応答 (デバッグ用) ---
+    # その他のメッセージ
     else:
         line_bot_api.reply_message(
             event.reply_token,
-            TextMessage(text="「画像テスト」と入力すると、現在の路線図が表示されます。")
+            TextSendMessage(text="現在、ゲームを開始していません。駅名を入力するか、次のステップでゲーム開始コマンドを設定します。")
         )
 
-# --- サーバー起動 ---
+# --- Flaskの起動 ---
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.getenv("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
