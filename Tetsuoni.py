@@ -10,7 +10,7 @@ import io
 
 # station_date.py から座標データをインポート
 try:
-    from station_date import STATION_COORDINATES
+    from station_data import STATION_COORDINATES
 except ImportError:
     print("エラー: station_date.py が見つかりません。")
     sys.exit(1)
