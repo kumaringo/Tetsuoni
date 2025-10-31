@@ -9,22 +9,21 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 
-# 💡 修正 1: インポートする変数を STATION_COORDINATES のみに変更
+# station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
 
-# 💡 修正 2: ピンの設定を Tetsuoni.py 内に定義
+# --- ピン設定 ---
 PIN_COLOR = (255, 0, 0) # 赤
 PIN_RADIUS = 10 # 半径
 
-# --- 環境変数から設定を読み込み ---
-# ... (以降のコードは変更なし)
 # --- 環境変数から設定を読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY')
 # x人のグループ参加者
 try:
-    REQUIRED_USERS = int(os.environ.get('REQUIRED_USERS', 2)) # デフォルトを2人に設定
+    # Renderの環境変数 REQUIRED_USERS から人数を取得
+    REQUIRED_USERS = int(os.environ.get('REQUIRED_USERS', 2)) 
 except ValueError:
     REQUIRED_USERS = 2
 
@@ -34,10 +33,11 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- 参加者のデータ保持 ---
-# キーはgroup_id/room_id、値は参加者の辞書 {user_id: {"username": str, "station": str}}
+# キーはgroup_id/room_id
+# 値は {username: {"username": str, "station": str}}
 participant_data = {} 
-# 参加済みユーザーのセット {group_id: {user_id1, user_id2, ...}}
-users_participated = {}
+# 値は {username1, username2, ...} (表示名で重複チェック)
+users_participated = {} 
 
 
 # --- WebhookのコールバックURL ---
@@ -59,7 +59,6 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text
-    user_id = event.source.user_id
     
     # グループIDまたはルームIDを取得
     if event.source.type == 'group':
@@ -67,11 +66,11 @@ def handle_message(event):
     elif event.source.type == 'room':
         chat_id = event.source.room_id
     else:
-        # グループ/ルーム以外のメッセージは無視または個別処理
         return
 
-    # ユーザー名を取得
+    # ユーザー名を取得（データキーとして使用）
     try:
+        user_id = event.source.user_id 
         if event.source.type == 'group':
             profile = line_bot_api.get_group_member_profile(chat_id, user_id)
         elif event.source.type == 'room':
@@ -87,30 +86,30 @@ def handle_message(event):
         users_participated[chat_id] = set()
 
     
-    # --- 💡 修正: 駅名チェックと応答処理 ---
     # 駅名リストに含まれるかチェック
     if text in STATION_COORDINATES:
         
-        # ユーザーがすでに駅を言っているかチェック
-        if user_id in users_participated[chat_id]:
+        # ユーザー名で重複チェック（同一名ユーザーはいない前提）
+        if username in users_participated[chat_id]:
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text=f'{username}さん、駅はすでに報告済みです。')
             )
             return
             
-        # データ記録
-        participant_data[chat_id][user_id] = {"username": username, "station": text}
-        users_participated[chat_id].add(user_id)
+        # データ記録（キーは username）
+        participant_data[chat_id][username] = {"username": username, "station": text}
+        users_participated[chat_id].add(username) 
         
         # 報告メッセージ
+        current_count = len(users_participated[chat_id])
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 **{len(users_participated[chat_id])} 人** / **{REQUIRED_USERS} 人**')
+            TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 **{current_count} 人** / **{REQUIRED_USERS} 人**')
         )
 
         # 人数が集まったかチェック
-        if len(users_participated[chat_id]) >= REQUIRED_USERS:
+        if current_count >= REQUIRED_USERS:
             # ピン打ち処理と送信
             send_map_with_pins(chat_id, participant_data[chat_id])
 
@@ -119,7 +118,7 @@ def handle_message(event):
             users_participated[chat_id] = set()
 
     else:
-        # 💡 修正: 未知の駅名への応答（「存在しない駅名」として返信）
+        # 未知の駅名への応答
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f'**「{text}」** はデータに存在しない駅名です。正しい駅名を報告してください。')
@@ -130,13 +129,14 @@ def send_map_with_pins(chat_id, participants):
     """路線図にピンを打ち、IMGBBにアップロード後、LINEに送信する"""
     
     # 1. 画像処理（ピン打ち）
+    temp_filename = "temp_rosenzu_pinned.png"
     try:
         # Rosenzu.pngを読み込み
         img = Image.open("Rosenzu.png").convert("RGB")
         draw = ImageDraw.Draw(img)
         
         # ピンを打つ処理
-        for user_id, data in participants.items():
+        for username, data in participants.items():
             station_name = data["station"]
             if station_name in STATION_COORDINATES:
                 x, y = STATION_COORDINATES[station_name]
@@ -145,11 +145,10 @@ def send_map_with_pins(chat_id, participants):
                              fill=PIN_COLOR, outline=PIN_COLOR)
 
         # 一時ファイルに保存
-        temp_filename = "temp_rosenzu_pinned.png"
         img.save(temp_filename, "PNG")
 
     except FileNotFoundError:
-        message = "エラー: Rosenzu.pngファイルが見つかりません。"
+        message = "エラー: Rosenzu.pngファイルが見つかりません。デプロイを確認してください。"
         line_bot_api.push_message(chat_id, TextSendMessage(text=message))
         return
     except Exception as e:
@@ -164,7 +163,7 @@ def send_map_with_pins(chat_id, participants):
     if image_url:
         # 報告内容のテキストを生成
         report_text = f"🚨 参加者 **{REQUIRED_USERS} 人**分のデータが集まりました！ 🚨\n\n"
-        for user_id, data in participants.items():
+        for username, data in participants.items():
             report_text += f"- **{data['username']}**: **{data['station']}**\n"
         
         # 画像とテキストを同時に送信
@@ -174,7 +173,7 @@ def send_map_with_pins(chat_id, participants):
                 TextSendMessage(text=report_text),
                 ImageSendMessage(
                     original_content_url=image_url,
-                    preview_image_url=image_url # プレビュー画像も同じURLを使用
+                    preview_image_url=image_url 
                 )
             ]
         )
@@ -190,7 +189,7 @@ def send_map_with_pins(chat_id, participants):
         os.remove(temp_filename)
 
 
-# --- IMGBBアップロード関数 (変更なし) ---
+# --- IMGBBアップロード関数 ---
 def upload_to_imgbb(filepath):
     """画像をIMGBBにアップロードし、URLを返す"""
     if not IMGBB_API_KEY:
@@ -203,7 +202,7 @@ def upload_to_imgbb(filepath):
             response = requests.post(url, 
                                      params={"key": IMGBB_API_KEY}, 
                                      files={"image": file})
-            response.raise_for_status() # HTTPエラーを確認
+            response.raise_for_status() 
 
             result = response.json()
             if result.get("success"):
