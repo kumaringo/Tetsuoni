@@ -9,51 +9,42 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 
+# station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
 
-# ===============================================
-# 📌 1. ユーザーが変更する設定エリア
-# ===============================================
+# --- 設定項目（ここを変更して再デプロイしてください） ---
 
-# 💡 修正 1: 必要な参加人数 (x) をここで定義します。
-REQUIRED_USERS = 3 # 👈 この数値を変更することで、必要な人数が変わります
+# 1. 何人分のデータを集めるかの人数 (x)
+REQUIRED_USERS = 4 # 👈 ここを変更して人数を設定
 
-# --- ピンの色とグループ分け設定 ---
-PIN_COLOR_RED = (255, 0, 0)      # 赤
-PIN_COLOR_BLUE = (0, 0, 255)    # 青
-PIN_RADIUS = 10 
+# 2. ピン設定
+PIN_COLOR_RED = (255, 0, 0)      # 赤グループのピンの色 (RGB)
+PIN_COLOR_BLUE = (0, 0, 255)    # 青グループのピンの色 (RGB)
+PIN_RADIUS = 10                  # ピンの半径（ピクセル）
 
-# 💡 修正 2: ユーザー名リストと色のマッピングを定義
+# 3. グループ分け設定
 # ユーザー名を変更したい場合は、このリストを編集してください。
-# ここに記載されていないユーザーは、デフォルトで赤グループとします。
+# ここに記載されていないユーザーは、デフォルトで赤グループとなります。
+# 同一名のユーザーはいない前提で動作します。
 USER_GROUPS = {
     # 赤グループのユーザー名リスト
     "RED_GROUP": [
-        "田中太郎",
-        "佐藤花子"
+        "茂野大雅",
+        "茂野大雅あ"
     ],
     # 青グループのユーザー名リスト
     "BLUE_GROUP": [
-        "山本一郎",
-        "渡辺恵美"
+        "茂野大雅い",
+        "茂野大雅う"
     ]
 }
-
-# ===============================================
-# ⚙️ 2. APIキー (環境変数から取得)
-# ===============================================
+# --- 設定項目 終了 ---
 
 
-# --- 環境変数から設定を読み込み ---
+# --- 環境変数からAPIキーを読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY')
-# x人のグループ参加者
-try:
-    # Renderの環境変数 REQUIRED_USERS から人数を取得
-    REQUIRED_USERS = int(os.environ.get('REQUIRED_USERS', 2)) 
-except ValueError:
-    REQUIRED_USERS = 2
 
 # --- LINE APIとFlaskの初期化 ---
 app = Flask(__name__)
@@ -61,11 +52,18 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- 参加者のデータ保持 ---
-# キーはgroup_id/room_id
+# キーは group_id/room_id
 # 値は {username: {"username": str, "station": str}}
 participant_data = {} 
 # 値は {username1, username2, ...} (表示名で重複チェック)
 users_participated = {} 
+
+# --- グループ判定ヘルパー関数 ---
+def get_pin_color(username):
+    """ユーザー名に基づいてピンの色を決定する"""
+    if username in USER_GROUPS["BLUE_GROUP"]:
+        return PIN_COLOR_BLUE
+    return PIN_COLOR_RED
 
 
 # --- WebhookのコールバックURL ---
@@ -166,11 +164,13 @@ def send_map_with_pins(chat_id, participants):
         # ピンを打つ処理
         for username, data in participants.items():
             station_name = data["station"]
+            pin_color = get_pin_color(username) # ユーザー名から色を取得
+            
             if station_name in STATION_COORDINATES:
                 x, y = STATION_COORDINATES[station_name]
                 # 円（ピン）を描画
                 draw.ellipse((x - PIN_RADIUS, y - PIN_RADIUS, x + PIN_RADIUS, y + PIN_RADIUS), 
-                             fill=PIN_COLOR, outline=PIN_COLOR)
+                             fill=pin_color, outline=pin_color)
 
         # 一時ファイルに保存
         img.save(temp_filename, "PNG")
@@ -192,7 +192,9 @@ def send_map_with_pins(chat_id, participants):
         # 報告内容のテキストを生成
         report_text = f"🚨 参加者 **{REQUIRED_USERS} 人**分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
-            report_text += f"- **{data['username']}**: **{data['station']}**\n"
+            # どのグループかを付記
+            group_color = "赤" if username in USER_GROUPS["RED_GROUP"] else "青" if username in USER_GROUPS["BLUE_GROUP"] else "不明(赤)"
+            report_text += f"- **{data['username']}** ({group_color}G): **{data['station']}**\n"
         
         # 画像とテキストを同時に送信
         line_bot_api.push_message(
