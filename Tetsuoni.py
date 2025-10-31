@@ -1,6 +1,6 @@
 import os
 import sys
-from flask import Flask, request, abort, send_file
+from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
@@ -8,17 +8,16 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 import io
 
-# station_date.py から座標データをインポート
+# station_data.py から座標データをインポート（※ファイル名がstation_data.pyである前提）
 try:
     from station_data import STATION_COORDINATES
 except ImportError:
-    print("エラー: station_date.py が見つかりません。")
+    print("エラー: station_data.py が見つかりません。ファイル名を確認してください。")
     sys.exit(1)
 
 app = Flask(__name__)
 
 # --- 環境変数から設定を読み込み ---
-# (Render側で設定します)
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
@@ -38,13 +37,9 @@ PIN_COLOR = "red"
 TEXT_COLOR = "black"
 
 # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# ★
 # ★ 参加人数 (x人) をここで設定します
-# ★
-REQUIRED_PARTICIPANTS = 5  # <-- ★ この数値を変更してください
-# ★
+REQUIRED_PARTICIPANTS = 5  # <-- この数値を変更してください
 # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-
 
 # 実行中のユーザーの駅名をグループごとに保存する辞書
 # { 'groupId1': {'userId1': '東京', 'userId2': '新宿'}, 'groupId2': ... }
@@ -60,10 +55,11 @@ def callback():
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
+        app.logger.error("InvalidSignatureError: 署名が不正です。チャンネルシークレットを確認してください。")
         abort(400)
     return 'OK'
 
-# --- メッセージ受信時の処理 (ロジック変更) ---
+# --- メッセージ受信時の処理 ---
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     # グループチャットでのみ動作
@@ -80,7 +76,7 @@ def handle_message(event):
 
     # --- 処理分岐 ---
 
-    # 1. 「リセット」コマンド (任意: 途中でリセットしたい場合用)
+    # 1. 「リセット」コマンド
     if text == 'リセット':
         collected_stations[group_id] = {}
         line_bot_api.reply_message(
@@ -97,20 +93,20 @@ def handle_message(event):
         
         current_count = len(collected_stations[group_id])
         
-        # 登録確認メッセージ (グループに通知)
-        line_bot_api.post_to_group(
-            group_id,
-            TextSendMessage(text=f"{text} を登録しました。 (現在 {current_count}/{REQUIRED_PARTICIPANTS}人)")
+        # 登録確認メッセージ (入力に対するリプライとして応答)
+        line_bot_api.reply_message( 
+            event.reply_token,
+            TextSendMessage(text=f"✅ {text} を登録しました。 (現在 {current_count}/{REQUIRED_PARTICIPANTS}人)")
         )
 
-        # 3. ★ 規定人数に達した場合
+        # 3. 規定人数に達した場合
         if current_count == REQUIRED_PARTICIPANTS:
             stations_to_draw = collected_stations[group_id]
             
-            # 処理中であることを通知 (任意)
+            # 処理中であることを通知
             line_bot_api.post_to_group(
                 group_id,
-                TextSendMessage(text=f"{REQUIRED_PARTICIPANTS}人の駅登録が完了しました。画像を作成します...")
+                TextSendMessage(text=f"🎉 {REQUIRED_PARTICIPANTS}人の駅登録が完了しました。画像を作成します！")
             )
 
             # 画像処理とアップロードを実行
@@ -133,37 +129,39 @@ def handle_message(event):
                 app.logger.error(f"画像処理または送信エラー: {e}")
                 line_bot_api.post_to_group(
                     group_id,
-                    TextSendMessage(text=f"エラーが発生しました: {e}")
+                    TextSendMessage(text=f"⚠️ エラーが発生しました: {e}")
                 )
     
-    # 4. 駅名以外が送信された場合 (何もしない)
+    # 4. 存在しない駅名が送信された場合
     else:
-        pass
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"⚠️ 『{text}』は登録された駅リストに存在しません。駅名リストにある駅名を入力してください。")
+        )
 
 
-# --- 画像処理関数 (変更なし) ---
+# --- 画像処理関数 ---
 def process_and_upload_image(stations):
     """
     駅名の辞書を受け取り、路線図にピンを刺し、IMGBBにアップロードしてURLを返す
-    stations: {'userId1': '東京', 'userId2': '新宿'}
     """
     
     # 1. 路線図の読み込み
     try:
         base_image = Image.open(ROSENZU_PATH).convert("RGBA")
     except FileNotFoundError:
-        raise Exception(f"{ROSENZU_PATH} が見つかりません。")
+        raise Exception(f"{ROSENZU_PATH} が見つかりません。ファイルを確認してください。")
         
     draw = ImageDraw.Draw(base_image)
     
-    # フォントの準備 (指定があれば)
+    # フォントの準備
     try:
         if FONT_PATH:
             font = ImageFont.truetype(FONT_PATH, size=PIN_RADIUS)
         else:
             font = ImageFont.load_default()
     except IOError:
-        font = ImageFont.load_default() # フォントが見つからない場合はデフォルト
+        font = ImageFont.load_default() 
 
     # 2. ピンと駅名を描画
     for user_id, station_name in stations.items():
@@ -180,7 +178,7 @@ def process_and_upload_image(stations):
             
             # 駅名を描画 (ピンのすぐ横)
             draw.text(
-                (x + PIN_RADIUS + 5, y - (PIN_RADIUS // 2)), # 座標を調整
+                (x + PIN_RADIUS + 5, y - (PIN_RADIUS // 2)), 
                 station_name,
                 fill=TEXT_COLOR,
                 font=font
@@ -189,7 +187,7 @@ def process_and_upload_image(stations):
     # 3. 画像をメモリ（バイトストリーム）に保存
     img_byte_arr = io.BytesIO()
     base_image.save(img_byte_arr, format='PNG')
-    img_byte_arr.seek(0) # ストリームの先頭に戻す
+    img_byte_arr.seek(0) 
 
     # 4. IMGBBにアップロード
     response = requests.post(
@@ -198,7 +196,7 @@ def process_and_upload_image(stations):
         files={'image': img_byte_arr}
     )
     
-    response.raise_for_status() # エラーチェック
+    response.raise_for_status() 
     result = response.json()
     
     if result.get("data") and result["data"].get("url"):
@@ -207,7 +205,7 @@ def process_and_upload_image(stations):
         raise Exception(f"IMGBBへのアップロードに失敗しました: {result}")
 
 
-# --- サーバー起動 (変更なし) ---
+# --- サーバー起動 ---
 if __name__ == "__main__":
     # Renderは $PORT 環境変数を設定します
     port = int(os.environ.get("PORT", 5001))
