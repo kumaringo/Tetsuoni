@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 import io
 
-# station_data.py から座標データをインポート（※ファイル名がstation_data.pyである前提）
+# station_data.py から座標データをインポート（※ファイル名はstation_data.pyである前提）
 try:
     from station_data import STATION_COORDINATES
 except ImportError:
@@ -17,7 +17,7 @@ except ImportError:
 
 app = Flask(__name__)
 
-# --- 環境変数から設定を読み込み ---
+# --- 環境変数から設定を読み込み (Renderで設定) ---
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
@@ -29,9 +29,9 @@ if not CHANNEL_ACCESS_TOKEN or not CHANNEL_SECRET or not IMGBB_API_KEY:
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 
-# --- 路線図とフォントの準備 ---
+# --- 定数設定 ---
 ROSENZU_PATH = "Rosenzu.png"
-FONT_PATH = None # 必要に応じてフォントファイルのパスを指定 (例: "ipaexg.ttf")
+FONT_PATH = None # フォントファイルのパス (IPAexGothicなど)
 PIN_RADIUS = 15
 PIN_COLOR = "red"
 TEXT_COLOR = "black"
@@ -88,12 +88,40 @@ def handle_message(event):
     # 2. 駅名が送信された場合
     elif text in STATION_COORDINATES:
         
-        # 既に登録済みの人が再度発言しても、人数はカウントアップしない
+        # --- ユーザー名重複チェック ---
+        current_user_name = None
+        try:
+            profile = line_bot_api.get_group_member_profile(group_id, user_id)
+            current_user_name = profile.display_name
+        except Exception:
+            pass # ユーザー名が取得できない場合はスキップ
+
+        # 既に登録済みのユーザー名リストを取得
+        registered_names = []
+        for uid in collected_stations[group_id].keys():
+            if uid == user_id: # 自分のIDはスキップ
+                continue
+            try:
+                other_profile = line_bot_api.get_group_member_profile(group_id, uid)
+                registered_names.append(other_profile.display_name)
+            except Exception:
+                pass
+
+        # ユーザー名が重複しているかチェック
+        if current_user_name and current_user_name in registered_names:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"❌ {current_user_name} 様、他の参加者と同じユーザー名です。名前を変更してください。")
+            )
+            return # 処理を中断
+        # -----------------------------
+        
+        # 登録/上書き処理に進む
         collected_stations[group_id][user_id] = text
         
         current_count = len(collected_stations[group_id])
         
-        # 登録確認メッセージ (入力に対するリプライとして応答)
+        # 登録確認メッセージ
         line_bot_api.reply_message( 
             event.reply_token,
             TextSendMessage(text=f"✅ {text} を登録しました。 (現在 {current_count}/{REQUIRED_PARTICIPANTS}人)")
@@ -103,10 +131,21 @@ def handle_message(event):
         if current_count == REQUIRED_PARTICIPANTS:
             stations_to_draw = collected_stations[group_id]
             
-            # 処理中であることを通知
+            # 登録者リストの作成
+            user_list_text = "【登録者一覧】\n"
+            for uid, station in stations_to_draw.items():
+                try:
+                    profile = line_bot_api.get_group_member_profile(group_id, uid)
+                    user_name = profile.display_name
+                except Exception:
+                    user_name = "（不明なユーザー）"
+                
+                user_list_text += f"・{user_name}：{station}\n"
+            
+            # 処理中であることを通知 (登録者リストを合わせて送信)
             line_bot_api.post_to_group(
                 group_id,
-                TextSendMessage(text=f"🎉 {REQUIRED_PARTICIPANTS}人の駅登録が完了しました。画像を作成します！")
+                TextSendMessage(text=f"🎉 {REQUIRED_PARTICIPANTS}人の駅登録が完了しました。画像を作成します！\n\n{user_list_text}")
             )
 
             # 画像処理とアップロードを実行
@@ -207,6 +246,5 @@ def process_and_upload_image(stations):
 
 # --- サーバー起動 ---
 if __name__ == "__main__":
-    # Renderは $PORT 環境変数を設定します
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port)
