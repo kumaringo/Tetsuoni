@@ -9,9 +9,15 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 
-# 💡 修正: station_date から station_data に変更
-from station_data import STATION_COORDINATES, PIN_COLOR, PIN_RADIUS
+# 💡 修正 1: インポートする変数を STATION_COORDINATES のみに変更
+from station_data import STATION_COORDINATES 
 
+# 💡 修正 2: ピンの設定を Tetsuoni.py 内に定義
+PIN_COLOR = (255, 0, 0) # 赤
+PIN_RADIUS = 10 # 半径
+
+# --- 環境変数から設定を読み込み ---
+# ... (以降のコードは変更なし)
 # --- 環境変数から設定を読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
