@@ -9,12 +9,40 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 
-# station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
 
-# --- ピン設定 ---
-PIN_COLOR = (255, 0, 0) # 赤
-PIN_RADIUS = 10 # 半径
+# ===============================================
+# 📌 1. ユーザーが変更する設定エリア
+# ===============================================
+
+# 💡 修正 1: 必要な参加人数 (x) をここで定義します。
+REQUIRED_USERS = 3 # 👈 この数値を変更することで、必要な人数が変わります
+
+# --- ピンの色とグループ分け設定 ---
+PIN_COLOR_RED = (255, 0, 0)      # 赤
+PIN_COLOR_BLUE = (0, 0, 255)    # 青
+PIN_RADIUS = 10 
+
+# 💡 修正 2: ユーザー名リストと色のマッピングを定義
+# ユーザー名を変更したい場合は、このリストを編集してください。
+# ここに記載されていないユーザーは、デフォルトで赤グループとします。
+USER_GROUPS = {
+    # 赤グループのユーザー名リスト
+    "RED_GROUP": [
+        "田中太郎",
+        "佐藤花子"
+    ],
+    # 青グループのユーザー名リスト
+    "BLUE_GROUP": [
+        "山本一郎",
+        "渡辺恵美"
+    ]
+}
+
+# ===============================================
+# ⚙️ 2. APIキー (環境変数から取得)
+# ===============================================
+
 
 # --- 環境変数から設定を読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
