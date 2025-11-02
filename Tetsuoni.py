@@ -159,6 +159,15 @@ def send_map_with_pins(chat_id, participants):
     try:
         # Rosenzu.pngを読み込み
         img = Image.open("Rosenzu.png").convert("RGB")
+
+        # ★★★ ここで 1000x1000 にリサイズ ★★★
+        # (元画像が1280x1280のため、station_data.pyの座標と合わせる)
+        TARGET_SIZE = (1000, 1000)
+        # Pillow 9.1.0以降推奨の高品質リサイズ
+        img = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS) 
+        # (古いPillowの場合は Image.ANTIALIAS を使う)
+        # img = img.resize(TARGET_SIZE, Image.ANTIALIAS) 
+        
         draw = ImageDraw.Draw(img)
         
         # ピンを打つ処理
