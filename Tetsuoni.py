@@ -8,6 +8,7 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
 from PIL import Image, ImageDraw
 import requests
+import io # メモリ内で画像を扱うため追加
 
 # station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
@@ -24,8 +25,6 @@ PIN_RADIUS = 10                  # ピンの半径（ピクセル）
 
 # 3. グループ分け設定
 # ユーザー名を変更したい場合は、このリストを編集してください。
-# ここに記載されていないユーザーは、デフォルトで赤グループとなります。
-# 同一名のユーザーはいない前提で動作します。
 USER_GROUPS = {
     # 赤グループのユーザー名リスト
     "RED_GROUP": [
@@ -155,7 +154,8 @@ def send_map_with_pins(chat_id, participants):
     """路線図にピンを打ち、IMGBBにアップロード後、LINEに送信する"""
     
     # 1. 画像処理（ピン打ち）
-    temp_filename = "temp_rosenzu_pinned.png"
+    img_byte_arr = io.BytesIO()
+    
     try:
         # Rosenzu.pngを読み込み
         img = Image.open("Rosenzu.png").convert("RGB")
@@ -172,8 +172,9 @@ def send_map_with_pins(chat_id, participants):
                 draw.ellipse((x - PIN_RADIUS, y - PIN_RADIUS, x + PIN_RADIUS, y + PIN_RADIUS), 
                              fill=pin_color, outline=pin_color)
 
-        # 一時ファイルに保存
-        img.save(temp_filename, "PNG")
+        # メモリ内のバッファにPNG形式で保存
+        img.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0) # ポインタを先頭に戻す
 
     except FileNotFoundError:
         message = "エラー: Rosenzu.pngファイルが見つかりません。デプロイを確認してください。"
@@ -185,7 +186,7 @@ def send_map_with_pins(chat_id, participants):
         return
 
     # 2. IMGBBにアップロード
-    image_url = upload_to_imgbb(temp_filename)
+    image_url = upload_to_imgbb(img_byte_arr)
     
     # 3. LINEに送信
     if image_url:
@@ -214,32 +215,37 @@ def send_map_with_pins(chat_id, participants):
             TextSendMessage(text="エラー: 路線図画像のアップロードに失敗しました。")
         )
         
-    # 一時ファイルを削除
-    if os.path.exists(temp_filename):
-        os.remove(temp_filename)
+    # メモリ内なので削除処理は不要
 
 
 # --- IMGBBアップロード関数 ---
-def upload_to_imgbb(filepath):
-    """画像をIMGBBにアップロードし、URLを返す"""
+def upload_to_imgbb(img_data):
+    """画像をIMGBBにアップロードし、オリジナル画像のURLを返す"""
     if not IMGBB_API_KEY:
         print("IMGBB API Keyが設定されていません。")
         return None
 
     url = "https://api.imgbb.com/1/upload"
     try:
-        with open(filepath, "rb") as file:
-            response = requests.post(url, 
+        # img_data (io.BytesIOオブジェクト) をファイルとして扱う
+        response = requests.post(url, 
                                      params={"key": IMGBB_API_KEY}, 
-                                     files={"image": file})
-            response.raise_for_status() 
+                                     files={"image": ("temp_image.png", img_data, "image/png")})
+        response.raise_for_status() 
 
-            result = response.json()
-            if result.get("success"):
+        result = response.json()
+        if result.get("success"):
+            # 可能な限りオリジナル画像に近いURLを取得する試み
+            try:
+                # 'image'フィールド内の'url'がオリジナル画像へのリンクである可能性が高い
+                original_url = result["data"]["image"]["url"] 
+                return original_url
+            except KeyError:
+                # 取得できない場合は、通常使われる 'url' を試す
                 return result["data"]["url"]
-            else:
-                print(f"IMGBBアップロード失敗: {result.get('error', {}).get('message', '不明なエラー')}")
-                return None
+        else:
+            print(f"IMGBBアップロード失敗: {result.get('error', {}).get('message', '不明なエラー')}")
+            return None
     except Exception as e:
         print(f"IMGBBアップロードエラー: {e}")
         return None
