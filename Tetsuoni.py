@@ -9,8 +9,8 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 import io # メモリ内で画像を扱うため追加
-import cloudinary # 👈 Cloudinary SDKをインポート
-import cloudinary.uploader # 👈 Cloudinaryのアップローダーをインポート
+import cloudinary 
+import cloudinary.uploader 
 import cloudinary.utils # 👈 URL生成のために追加
 
 # station_data.py から座標データをインポート
@@ -19,7 +19,7 @@ from station_data import STATION_COORDINATES
 # --- 設定項目（ここを変更して再デプロイしてください） ---
 
 # 1. 何人分のデータを集めるかの人数 (x)
-REQUIRED_USERS = 1 # 👈 ここを変更して人数を設定
+REQUIRED_USERS = 1 
 
 # 2. ピン設定
 PIN_COLOR_RED = (255, 0, 0)      # 赤グループのピンの色 (RGB)
@@ -27,7 +27,6 @@ PIN_COLOR_BLUE = (0, 0, 255)    # 青グループのピンの色 (RGB)
 PIN_RADIUS = 10                  # ピンの半径（ピクセル）
 
 # 3. グループ分け設定
-# ユーザー名を変更したい場合は、このリストを編集してください。
 USER_GROUPS = {
     # 赤グループのユーザー名リスト
     "RED_GROUP": [
@@ -46,8 +45,6 @@ USER_GROUPS = {
 # --- 環境変数からAPIキーを読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-# IMGBB_API_KEY は削除済み
-# 👈 Cloudinaryの認証情報を追加
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME') 
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
@@ -181,7 +178,7 @@ def send_map_with_pins(chat_id, participants):
             pin_color = get_pin_color(username) # ユーザー名から色を取得
             
             if station_name in STATION_COORDINATES:
-                # 📌 ここは倍率を掛けない「元の座標」を使用
+                # 📌 Cloudinaryの自動拡大を無効化したため、元の座標を使用
                 x, y = STATION_COORDINATES[station_name]
                 # 円（ピン）を描画
                 draw.ellipse((x - PIN_RADIUS, y - PIN_RADIUS, x + PIN_RADIUS, y + PIN_RADIUS), 
@@ -208,7 +205,6 @@ def send_map_with_pins(chat_id, participants):
     if public_id:
         
         # CloudinaryのURL生成機能を使って、LINEに適したURLを動的に生成
-        # 📌 Cloudinaryの自動リサイズが無効化されたため、元のサイズを前提にLINE推奨サイズを要求
         
         # LINEのオリジナル画像URL (最大1024x1024にリサイズ)
         original_url = cloudinary.utils.cloudinary_url(
@@ -216,7 +212,7 @@ def send_map_with_pins(chat_id, participants):
             width=1024, # LINE推奨の最大幅
             crop="limit",
             secure=True,
-            format="png"
+            format="png" # PNGを強制
         )[0] 
         
         # LINEのプレビュー画像URL (最大240x240にリサイズ)
@@ -225,7 +221,7 @@ def send_map_with_pins(chat_id, participants):
             width=240, 
             crop="limit",
             secure=True,
-            format="png"
+            format="png" # PNGを強制
         )[0]
         
         # 報告内容のテキストを生成
@@ -241,8 +237,8 @@ def send_map_with_pins(chat_id, participants):
             [
                 TextSendMessage(text=report_text),
                 ImageSendMessage(
-                    original_content_url=original_url, # 📌 修正後のURL
-                    preview_image_url=preview_url # 📌 修正後のURL
+                    original_content_url=original_url,
+                    preview_image_url=preview_url
                 )
             ]
         )
@@ -258,7 +254,7 @@ def send_map_with_pins(chat_id, participants):
 
 # --- Cloudinaryアップロード関数 ---
 def upload_to_cloudinary(img_data):
-    """画像をCloudinaryにアップロードし、公開IDを返す (リサイズ防止設定あり)"""
+    """画像をCloudinaryにアップロードし、公開IDを返す (1000x1000を強制し自動リサイズを防ぐ)"""
     if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
         print("Cloudinaryの認証情報が設定されていません。")
         return None
@@ -269,13 +265,13 @@ def upload_to_cloudinary(img_data):
             img_data, 
             resource_type="image", 
             folder="tetsuoni_maps", # 任意のフォルダ名
-            # 📌 変換パラメータを追加し、元のサイズ(1000x1000)を上限として自動リサイズを防ぐ
+            # 📌 変換パラメータを追加し、1000x1000を強制し、スケールモードでリサイズのみを行う
             transformation=[
-                {'width': 1000, 'height': 1000, 'crop': 'limit'} 
+                {'width': 1000, 'height': 1000, 'crop': 'scale'} 
             ]
         )
         
-        # 📌 アップロードが成功した場合、URLではなく public_id を返す
+        # 📌 public_id を返す
         return upload_result.get("public_id")
         
     except Exception as e:
