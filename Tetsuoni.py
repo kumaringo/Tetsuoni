@@ -8,10 +8,10 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
 from PIL import Image, ImageDraw
 import requests
-import io # メモリ内で画像を扱うため追加
+import io 
 import cloudinary 
 import cloudinary.uploader 
-import cloudinary.utils # 👈 URL生成のために追加
+# import cloudinary.utils # URL生成にsecure_urlを直接使うため不要
 
 # station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
@@ -28,12 +28,10 @@ PIN_RADIUS = 10                  # ピンの半径（ピクセル）
 
 # 3. グループ分け設定
 USER_GROUPS = {
-    # 赤グループのユーザー名リスト
     "RED_GROUP": [
         "茂野大雅",
         "茂野大雅あ"
     ],
-    # 青グループのユーザー名リスト
     "BLUE_GROUP": [
         "茂野大雅い",
         "茂野大雅う"
@@ -62,10 +60,7 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- 参加者のデータ保持 ---
-# キーは group_id/room_id
-# 値は {username: {"username": str, "station": str}}
 participant_data = {} 
-# 値は {username1, username2, ...} (表示名で重複チェック)
 users_participated = {} 
 
 # --- グループ判定ヘルパー関数 ---
@@ -104,7 +99,7 @@ def handle_message(event):
     else:
         return
 
-    # ユーザー名を取得（データキーとして使用）
+    # ユーザー名を取得
     try:
         user_id = event.source.user_id 
         if event.source.type == 'group':
@@ -125,7 +120,7 @@ def handle_message(event):
     # 駅名リストに含まれるかチェック
     if text in STATION_COORDINATES:
         
-        # ユーザー名で重複チェック（同一名ユーザーはいない前提）
+        # ユーザー名で重複チェック
         if username in users_participated[chat_id]:
             line_bot_api.reply_message(
                 event.reply_token,
@@ -133,7 +128,7 @@ def handle_message(event):
             )
             return
             
-        # データ記録（キーは username）
+        # データ記録
         participant_data[chat_id][username] = {"username": username, "station": text}
         users_participated[chat_id].add(username) 
         
@@ -175,18 +170,19 @@ def send_map_with_pins(chat_id, participants):
         # ピンを打つ処理
         for username, data in participants.items():
             station_name = data["station"]
-            pin_color = get_pin_color(username) # ユーザー名から色を取得
+            pin_color = get_pin_color(username) 
             
             if station_name in STATION_COORDINATES:
-                # 📌 Cloudinaryの自動拡大を無効化したため、元の座標を使用
+                # 📌 station_dataの座標をそのまま使用（拡大・割り戻しなし）
                 x, y = STATION_COORDINATES[station_name]
+                
                 # 円（ピン）を描画
                 draw.ellipse((x - PIN_RADIUS, y - PIN_RADIUS, x + PIN_RADIUS, y + PIN_RADIUS), 
                              fill=pin_color, outline=pin_color)
 
         # メモリ内のバッファにPNG形式で保存
         img.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0) # ポインタを先頭に戻す
+        img_byte_arr.seek(0) 
 
     except FileNotFoundError:
         message = "エラー: Rosenzu.pngファイルが見つかりません。デプロイを確認してください。"
@@ -198,32 +194,11 @@ def send_map_with_pins(chat_id, participants):
         return
 
     # 2. Cloudinaryにアップロード
-    # 📌 public_id を取得
-    public_id = upload_to_cloudinary(img_byte_arr) 
+    # 👈 secure_url を取得
+    image_url = upload_to_cloudinary(img_byte_arr) 
     
     # 3. LINEに送信
-    if public_id:
-        
-        # CloudinaryのURL生成機能を使って、LINEに適したURLを動的に生成
-        
-        # LINEのオリジナル画像URL (最大1024x1024にリサイズ)
-        original_url = cloudinary.utils.cloudinary_url(
-            public_id,
-            width=1024, # LINE推奨の最大幅
-            crop="limit",
-            secure=True,
-            format="png" # PNGを強制
-        )[0] 
-        
-        # LINEのプレビュー画像URL (最大240x240にリサイズ)
-        preview_url = cloudinary.utils.cloudinary_url(
-            public_id,
-            width=240, 
-            crop="limit",
-            secure=True,
-            format="png" # PNGを強制
-        )[0]
-        
+    if image_url:
         # 報告内容のテキストを生成
         report_text = f"🚨 参加者 **{REQUIRED_USERS} 人**分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
@@ -237,8 +212,8 @@ def send_map_with_pins(chat_id, participants):
             [
                 TextSendMessage(text=report_text),
                 ImageSendMessage(
-                    original_content_url=original_url,
-                    preview_image_url=preview_url
+                    original_content_url=image_url, # 📌 secure_url を使用
+                    preview_image_url=image_url    # 📌 secure_url を使用
                 )
             ]
         )
@@ -254,25 +229,22 @@ def send_map_with_pins(chat_id, participants):
 
 # --- Cloudinaryアップロード関数 ---
 def upload_to_cloudinary(img_data):
-    """画像をCloudinaryにアップロードし、公開IDを返す (1000x1000を強制し自動リサイズを防ぐ)"""
+    """画像をCloudinaryにアップロードし、URLを返す（変換設定なし）"""
     if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
         print("Cloudinaryの認証情報が設定されていません。")
         return None
 
     try:
         # Cloudinary Uploaderを使用してアップロード
+        # 📌 変換パラメータなしで、Cloudinaryのデフォルト設定に任せる
         upload_result = cloudinary.uploader.upload(
             img_data, 
             resource_type="image", 
-            folder="tetsuoni_maps", # 任意のフォルダ名
-            # 📌 変換パラメータを追加し、1000x1000を強制し、スケールモードでリサイズのみを行う
-            transformation=[
-                {'width': 1000, 'height': 1000, 'crop': 'scale'} 
-            ]
+            folder="tetsuoni_maps" 
         )
         
-        # 📌 public_id を返す
-        return upload_result.get("public_id")
+        # アップロードが成功した場合、URLを返す
+        return upload_result.get("secure_url")
         
     except Exception as e:
         print(f"Cloudinaryアップロードエラー: {e}")
