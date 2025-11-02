@@ -3,3 +3,4 @@ line-bot-sdk
 Pillow
 gunicorn
 requests
+cloudinary
