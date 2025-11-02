@@ -15,7 +15,7 @@ from station_data import STATION_COORDINATES
 # --- 設定項目（ここを変更して再デプロイしてください） ---
 
 # 1. 何人分のデータを集めるかの人数 (x)
-REQUIRED_USERS = 4 # 👈 ここを変更して人数を設定
+REQUIRED_USERS = 1 # 👈 ここを変更して人数を設定
 
 # 2. ピン設定
 PIN_COLOR_RED = (255, 0, 0)      # 赤グループのピンの色 (RGB)
@@ -159,15 +159,6 @@ def send_map_with_pins(chat_id, participants):
     try:
         # Rosenzu.pngを読み込み
         img = Image.open("Rosenzu.png").convert("RGB")
-
-        # ★★★ ここで 1000x1000 にリサイズ ★★★
-        # (元画像が1280x1280のため、station_data.pyの座標と合わせる)
-        TARGET_SIZE = (1000, 1000)
-        # Pillow 9.1.0以降推奨の高品質リサイズ
-        img = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS) 
-        # (古いPillowの場合は Image.ANTIALIAS を使う)
-        # img = img.resize(TARGET_SIZE, Image.ANTIALIAS) 
-        
         draw = ImageDraw.Draw(img)
         
         # ピンを打つ処理
