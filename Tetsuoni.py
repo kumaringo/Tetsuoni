@@ -9,16 +9,16 @@ from PIL import Image, ImageDraw
 import cloudinary
 import cloudinary.uploader
 
-# station_data.py から座標データをインポート
-from station_data import STATION_COORDINATES
+# 比率ベースの駅データをインポート
+from station_data import STATION_RATIO, STATION_COORDINATES, pixels_to_ratio
 
 # ==============================
-# Flask app (トップレベルで app を定義)
+# Flask app
 # ==============================
 app = Flask(__name__)
 
 # ==============================
-# 設定（必要ならここを編集）
+# 設定（必要なら編集）
 # ==============================
 REQUIRED_USERS = 2
 PIN_COLOR_RED = (255, 0, 0)
@@ -37,7 +37,7 @@ USER_GROUPS = {
 }
 
 # ==============================
-# 環境変数読み込み / Cloudinary 設定
+# 環境変数 / Cloudinary 設定
 # ==============================
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
@@ -68,7 +68,7 @@ users_participated = {}
 # ヘルパー
 # ==============================
 def get_pin_color(username):
-    """ユーザー名に基づいてピンの色を決定（RGBタプルを返す）"""
+    """ユーザー名に基づいてピンの色を決定（RGBタプル）"""
     if username in USER_GROUPS.get("BLUE_GROUP", []):
         return PIN_COLOR_BLUE
     return PIN_COLOR_RED
@@ -102,7 +102,6 @@ def handle_message(event):
     elif event.source.type == 'room':
         chat_id = event.source.room_id
     else:
-        # 個別トークの場合は user_id を使う（必要なら）
         chat_id = event.source.user_id
 
     # ユーザー名を取得
@@ -123,8 +122,9 @@ def handle_message(event):
         participant_data[chat_id] = {}
         users_participated[chat_id] = set()
 
-    # 駅名がSTATION_COORDINATESにあれば登録
-    if text in STATION_COORDINATES:
+    # 駅名がSTATION_RATIO（または互換のSTATION_COORDINATES）にあれば登録
+    station_exists = text in STATION_RATIO or text in STATION_COORDINATES
+    if station_exists:
         if username in users_participated[chat_id]:
             line_bot_api.reply_message(
                 event.reply_token,
@@ -146,31 +146,29 @@ def handle_message(event):
             participant_data[chat_id] = {}
             users_participated[chat_id] = set()
     else:
-        # 未知の駅名
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f'「{text}」 はデータに存在しない駅名です。正しい駅名を報告してください。')
         )
 
 # ==============================
-# 画像処理: 実保存サイズに合わせてリサイズ → ピン描画 → 再アップロード → LINE送信
+# 画像処理（比率ベース）
 # ==============================
 def send_map_with_pins(chat_id, participants):
     """
-    Cloudinary 側の実際サイズに合わせて画像をリサイズ → ピンを描画 → 再アップロード → LINE送信
+    STATION_RATIO（比率 0-1）を用いて位置を決定するバージョン。
     participants: { username: {"username": str, "station": station_name}, ... }
     """
     try:
-        # 1) 元画像を読み込み（Rosenzu.png はプロジェクトルートに配置）
+        # 元画像（ローカル）
         orig_path = "Rosenzu.png"
         orig_img = Image.open(orig_path).convert("RGB")
-        orig_w, orig_h = orig_img.size  # 例: 1000,1000 (元基準)
+        orig_w, orig_h = orig_img.size  # 例: 1000,1000
 
-        # 2) 元画像を変換なしで一度 Cloudinary にアップロードして、Cloudinary に保存されたサイズを取得
+        # 1) 一度 Cloudinary にアップして保存サイズを取得（Cloudinary が実際にどのサイズにするか確認するため）
         buf_base = io.BytesIO()
         orig_img.save(buf_base, format='PNG')
         buf_base.seek(0)
-
         base_upload = cloudinary.uploader.upload(
             buf_base,
             resource_type="image",
@@ -179,14 +177,10 @@ def send_map_with_pins(chat_id, participants):
             unique_filename=False,
             overwrite=True
         )
-        if not base_upload:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="Cloudinary にベース画像をアップできませんでした。"))
-            return
-
         uploaded_w = int(base_upload.get("width", orig_w))
         uploaded_h = int(base_upload.get("height", orig_h))
 
-        # 3) Cloudinary に保存されたサイズに合わせてローカル画像をリサイズ
+        # 2) ローカル画像を uploaded サイズに合わせてリサイズして描画
         if (uploaded_w, uploaded_h) != (orig_w, orig_h):
             img = orig_img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
         else:
@@ -194,25 +188,51 @@ def send_map_with_pins(chat_id, participants):
 
         draw = ImageDraw.Draw(img)
 
-        # 4) 元座標(=STATION_COORDINATES の基準: e.g. 1000x1000) に対するスケールを計算
-        scale_x = uploaded_w / orig_w
-        scale_y = uploaded_h / orig_h
-        avg_scale = (scale_x + scale_y) / 2.0
-        scaled_radius = max(1, int(PIN_RADIUS * avg_scale))
+        # ピンサイズ（縦横平均スケール）
+        scale_x = uploaded_w / float(orig_w)
+        scale_y = uploaded_h / float(orig_h)
+        scaled_radius = max(1, int(round(PIN_RADIUS * ((scale_x + scale_y) / 2.0))))
 
-        # 5) 各参加者の駅にピンを描画
+        debug_lines = []
+
         for username, data in participants.items():
             station_name = data.get("station")
             pin_color = get_pin_color(username)
-            if station_name in STATION_COORDINATES:
-                # STATION_COORDINATES は (x,y) タプルの辞書であることを想定
-                x0, y0 = STATION_COORDINATES[station_name]
-                x = int(x0 * scale_x)
-                y = int(y0 * scale_y)
-                draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
-                             fill=pin_color, outline=pin_color)
+            if not station_name:
+                continue
 
-        # 6) 描画済み画像をメモリに保存して Cloudinary に再アップロード
+            # 比率データがあるか
+            if station_name in STATION_RATIO:
+                rx, ry = STATION_RATIO[station_name]
+                if not (0.0 <= rx <= 1.0 and 0.0 <= ry <= 1.0):
+                    debug_lines.append(f"{station_name} の比率が不正です: ({rx},{ry})")
+                    continue
+                x = int(round(rx * uploaded_w))
+                y = int(round(ry * uploaded_h))
+
+            else:
+                # 互換: もし古いピクセル座標(STATION_COORDINATES)があれば比率へ変換して使う
+                if station_name in STATION_COORDINATES:
+                    x_px, y_px = STATION_COORDINATES[station_name]
+                    rx = float(x_px) / float(orig_w)
+                    ry = float(y_px) / float(orig_h)
+                    x = int(round(rx * uploaded_w))
+                    y = int(round(ry * uploaded_h))
+                    debug_lines.append(f"{station_name} (from pixels) -> ratio ({rx:.6f},{ry:.6f}) -> ({x},{y})")
+                else:
+                    debug_lines.append(f"{station_name} が STATION_RATIO に存在しません。")
+                    continue
+
+            # 円としてピンを描画
+            draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
+                         fill=pin_color, outline=pin_color)
+
+            debug_lines.append(f"{username} -> {station_name}: ({x},{y})")
+
+        # デバッグ画像をローカル保存（確認用）
+        img.save("debug_drawn.png", format="PNG")
+
+        # 3) Cloudinary に最終画像をアップロード（変換を明示しておく）
         out_buf = io.BytesIO()
         img.save(out_buf, format='PNG')
         out_buf.seek(0)
@@ -222,27 +242,23 @@ def send_map_with_pins(chat_id, participants):
             resource_type="image",
             folder="tetsuoni_maps",
             use_filename=True,
-            unique_filename=True
+            unique_filename=True,
+            transformation=[{"width": uploaded_w, "height": uploaded_h, "crop": "scale"}]
         )
 
         image_url = final_upload.get("secure_url") if final_upload else None
 
-        # 7) LINE に結果を送信
+        # 4) LINE に送信（座標デバッグ情報も添える）
         if image_url:
             report_text = f"🚨 参加者 {REQUIRED_USERS} 人分のデータが集まりました！ 🚨\n\n"
             for username, data in participants.items():
                 group_color = "赤" if username in USER_GROUPS.get("RED_GROUP", []) else "青" if username in USER_GROUPS.get("BLUE_GROUP", []) else "不明(赤)"
                 report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
 
-            # デバッグ情報（Cloudinary に保存された実サイズ）
-            debug_text = f"(Cloudinary 保存サイズ: {uploaded_w}x{uploaded_h})"
+            debug_text = f"(Cloudinary 保存サイズ: {uploaded_w}x{uploaded_h})\n" + "\n".join(debug_lines)
             line_bot_api.push_message(chat_id, TextSendMessage(text=report_text + "\n" + debug_text))
 
-            # 画像を送信
-            line_bot_api.push_message(
-                chat_id,
-                ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
-            )
+            line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
         else:
             line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: 描画済み画像のアップロードに失敗しました。"))
 
@@ -252,13 +268,9 @@ def send_map_with_pins(chat_id, participants):
         line_bot_api.push_message(chat_id, TextSendMessage(text=f"エラー: 画像処理で問題が発生しました: {e}"))
 
 # ==============================
-# 補助: (必要なら別途使う) upload_to_cloudinary 関数
+# upload_to_cloudinary（補助）
 # ==============================
 def upload_to_cloudinary(img_data):
-    """
-    画像をCloudinaryにアップロードし、(secure_url, upload_result) を返す
-    （変換を避けたい場合は transformation を付けないで利用）
-    """
     if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
         print("Cloudinaryの認証情報が設定されていません。")
         return None, {}
@@ -271,7 +283,6 @@ def upload_to_cloudinary(img_data):
             use_filename=True,
             unique_filename=False,
             overwrite=True,
-            # transformation=[{"width": 1000, "height": 1000, "crop": "limit"}]  # 必要なら有効化
         )
         secure_url = upload_result.get('secure_url')
         return secure_url, upload_result
