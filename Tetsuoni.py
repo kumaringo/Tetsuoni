@@ -9,6 +9,8 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 import io # メモリ内で画像を扱うため追加
+import cloudinary # 👈 Cloudinary SDKをインポート
+import cloudinary.uploader # 👈 Cloudinaryのアップローダーをインポート
 
 # station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
@@ -43,7 +45,18 @@ USER_GROUPS = {
 # --- 環境変数からAPIキーを読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY')
+# IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY') # 👈 IMGBBキーは不要に
+# 👈 Cloudinaryの認証情報を追加
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME') 
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
+
+# 👈 Cloudinaryの設定
+cloudinary.config(
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET
+)
 
 # --- LINE APIとFlaskの初期化 ---
 app = Flask(__name__)
@@ -151,7 +164,7 @@ def handle_message(event):
 
 # --- ピン打ちと送信のメイン関数 ---
 def send_map_with_pins(chat_id, participants):
-    """路線図にピンを打ち、IMGBBにアップロード後、LINEに送信する"""
+    """路線図にピンを打ち、Cloudinaryにアップロード後、LINEに送信する"""
     
     # 1. 画像処理（ピン打ち）
     img_byte_arr = io.BytesIO()
@@ -185,8 +198,9 @@ def send_map_with_pins(chat_id, participants):
         line_bot_api.push_message(chat_id, TextSendMessage(text=message))
         return
 
-    # 2. IMGBBにアップロード
-    image_url = upload_to_imgbb(img_byte_arr)
+    # 2. Cloudinaryにアップロード
+    # 👈 関数名を変更
+    image_url = upload_to_cloudinary(img_byte_arr) 
     
     # 3. LINEに送信
     if image_url:
@@ -218,36 +232,27 @@ def send_map_with_pins(chat_id, participants):
     # メモリ内なので削除処理は不要
 
 
-# --- IMGBBアップロード関数 ---
-def upload_to_imgbb(img_data):
-    """画像をIMGBBにアップロードし、オリジナル画像のURLを返す"""
-    if not IMGBB_API_KEY:
-        print("IMGBB API Keyが設定されていません。")
+# --- Cloudinaryアップロード関数 ---
+def upload_to_cloudinary(img_data):
+    """画像をCloudinaryにアップロードし、URLを返す"""
+    if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
+        print("Cloudinaryの認証情報が設定されていません。")
         return None
 
-    url = "https://api.imgbb.com/1/upload"
     try:
-        # img_data (io.BytesIOオブジェクト) をファイルとして扱う
-        response = requests.post(url, 
-                                     params={"key": IMGBB_API_KEY}, 
-                                     files={"image": ("temp_image.png", img_data, "image/png")})
-        response.raise_for_status() 
-
-        result = response.json()
-        if result.get("success"):
-            # 可能な限りオリジナル画像に近いURLを取得する試み
-            try:
-                # 'image'フィールド内の'url'がオリジナル画像へのリンクである可能性が高い
-                original_url = result["data"]["image"]["url"] 
-                return original_url
-            except KeyError:
-                # 取得できない場合は、通常使われる 'url' を試す
-                return result["data"]["url"]
-        else:
-            print(f"IMGBBアップロード失敗: {result.get('error', {}).get('message', '不明なエラー')}")
-            return None
+        # Cloudinary Uploaderを使用してアップロード
+        # img_data (io.BytesIOオブジェクト) を直接渡す
+        upload_result = cloudinary.uploader.upload(
+            img_data, 
+            resource_type="image", 
+            folder="tetsuoni_maps" # 任意のフォルダ名
+        )
+        
+        # アップロードが成功した場合、URLを返す
+        return upload_result.get("secure_url")
+        
     except Exception as e:
-        print(f"IMGBBアップロードエラー: {e}")
+        print(f"Cloudinaryアップロードエラー: {e}")
         return None
 
 # --- アプリの実行（Renderではgunicornが実行） ---
