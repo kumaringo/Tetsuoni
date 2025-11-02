@@ -141,54 +141,22 @@ def handle_message(event):
 # ==============================
 def send_map_with_pins(chat_id, participants):
     """
-    - STATION_COORDINATES の座標が 0..1 の値なら「比率(normalized)」
-      それ以外（例えば 300, 500）なら「ピクセル座標（orig基準）」と判定します。
-    - ワークフロー:
-      1) 元画像を base upload（変換なし）して Cloudinary に保存された実サイズを取得
-      2) 実サイズに合わせてローカル画像をリサイズ
-      3) 比率 or ピクセルに応じて座標を算出してピン描画
-      4) 描画済み画像を再アップロードして LINE に送信
+    ピン位置補正版:
+    - Cloudinary へのアップロードによるサイズ変更を無視。
+    - ローカルの Rosenzu.png のピクセルサイズ（orig_w, orig_h）を座標の基準にする。
     """
+
     try:
         orig_path = "Rosenzu.png"
         orig_img = Image.open(orig_path).convert("RGB")
-        orig_w, orig_h = orig_img.size  # 例: 1000x1000 を想定
+        orig_w, orig_h = orig_img.size  # 例: 1000x1000
 
-        # base upload（変換なし）で Cloudinary に保存される実サイズを取得
-        buf_base = io.BytesIO()
-        orig_img.save(buf_base, format='PNG')
-        buf_base.seek(0)
+        draw = ImageDraw.Draw(orig_img)
 
-        base_upload = cloudinary.uploader.upload(
-            buf_base,
-            resource_type="image",
-            folder="tetsuoni_maps",
-            use_filename=True,
-            unique_filename=False,
-            overwrite=True
-        )
-        if not base_upload:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="Cloudinary にベース画像をアップできませんでした。"))
-            return
+        # ピンサイズは固定 (px単位)
+        scaled_radius = PIN_RADIUS
 
-        uploaded_w = int(base_upload.get("width", orig_w))
-        uploaded_h = int(base_upload.get("height", orig_h))
-
-        # 実保存サイズにリサイズ
-        if (uploaded_w, uploaded_h) != (orig_w, orig_h):
-            img = orig_img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
-        else:
-            img = orig_img.copy()
-
-        draw = ImageDraw.Draw(img)
-
-        # 縮尺（ピン半径用）
-        scale_x = uploaded_w / orig_w
-        scale_y = uploaded_h / orig_h
-        avg_scale = (scale_x + scale_y) / 2.0
-        scaled_radius = max(1, int(PIN_RADIUS * avg_scale))
-
-        # 各参加者のピン描画
+        # 各参加者のピンを描画
         for username, data in participants.items():
             station_name = data.get("station")
             pin_color = get_pin_color(username)
@@ -197,24 +165,26 @@ def send_map_with_pins(chat_id, participants):
 
             x0, y0 = STATION_COORDINATES[station_name]
 
-            # 判定: 正規化座標（0..1）かピクセル座標か
+            # 比率かピクセルか自動判定
             is_normalized = (0.0 <= float(x0) <= 1.0) and (0.0 <= float(y0) <= 1.0)
 
             if is_normalized:
-                # 比率座標 -> 実保存サイズに直接掛ける
-                x = int(float(x0) * uploaded_w)
-                y = int(float(y0) * uploaded_h)
+                x = int(float(x0) * orig_w)
+                y = int(float(y0) * orig_h)
             else:
-                # ピクセル座標（orig基準） -> uploaded サイズへスケーリング
-                x = int(float(x0) * (uploaded_w / orig_w))
-                y = int(float(y0) * (uploaded_h / orig_h))
+                x = int(float(x0))
+                y = int(float(y0))
 
-            draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
-                         fill=pin_color, outline=pin_color)
+            # ピン描画
+            draw.ellipse(
+                (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
+                fill=pin_color,
+                outline=pin_color
+            )
 
-        # 描画済み画像を再アップロード
+        # Cloudinary にアップロード
         out_buf = io.BytesIO()
-        img.save(out_buf, format='PNG')
+        orig_img.save(out_buf, format='PNG')
         out_buf.seek(0)
 
         final_upload = cloudinary.uploader.upload(
@@ -222,7 +192,8 @@ def send_map_with_pins(chat_id, participants):
             resource_type="image",
             folder="tetsuoni_maps",
             use_filename=True,
-            unique_filename=True
+            unique_filename=True,
+            overwrite=True
         )
 
         image_url = final_upload.get("secure_url") if final_upload else None
@@ -230,20 +201,23 @@ def send_map_with_pins(chat_id, participants):
         if image_url:
             report_text = f"🚨 参加者 {REQUIRED_USERS} 人分のデータが集まりました！ 🚨\n\n"
             for username, data in participants.items():
-                group_color = "赤" if username in USER_GROUPS.get("RED_GROUP", []) else "青" if username in USER_GROUPS.get("BLUE_GROUP", []) else "不明(赤)"
+                group_color = (
+                    "赤" if username in USER_GROUPS.get("RED_GROUP", [])
+                    else "青" if username in USER_GROUPS.get("BLUE_GROUP", [])
+                    else "不明(赤)"
+                )
                 report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
 
-            debug_text = f"(Cloudinary 保存サイズ: {uploaded_w}x{uploaded_h})"
-            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text + "\n" + debug_text))
+            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text))
             line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
         else:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: 描画済み画像のアップロードに失敗しました。"))
+            line_bot_api.push_message(chat_id, TextSendMessage(text="❌ エラー: Cloudinary アップロードに失敗しました。"))
 
     except FileNotFoundError:
-        line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: Rosenzu.png が見つかりません。"))
+        line_bot_api.push_message(chat_id, TextSendMessage(text="❌ エラー: Rosenzu.png が見つかりません。"))
     except Exception as e:
-        line_bot_api.push_message(chat_id, TextSendMessage(text=f"エラー: 画像処理で問題が発生しました: {e}"))
-
+        line_bot_api.push_message(chat_id, TextSendMessage(text=f"❌ 画像処理エラー: {e}"))
+     
 # ==============================
 # 補助関数（必要なら使う）
 # ==============================
