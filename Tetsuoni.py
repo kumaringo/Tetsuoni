@@ -9,8 +9,9 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import requests
 import io # メモリ内で画像を扱うため追加
-import cloudinary # 👈 Cloudinary SDKをインポート
-import cloudinary.uploader # 👈 Cloudinaryのアップローダーをインポート
+import cloudinary 
+import cloudinary.uploader 
+import cloudinary.utils # 👈 URL生成のために追加
 
 # station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES 
@@ -18,7 +19,7 @@ from station_data import STATION_COORDINATES
 # --- 設定項目（ここを変更して再デプロイしてください） ---
 
 # 1. 何人分のデータを集めるかの人数 (x)
-REQUIRED_USERS = 1 # 👈 ここを変更して人数を設定
+REQUIRED_USERS = 1 
 
 # 2. ピン設定
 PIN_COLOR_RED = (255, 0, 0)      # 赤グループのピンの色 (RGB)
@@ -26,7 +27,6 @@ PIN_COLOR_BLUE = (0, 0, 255)    # 青グループのピンの色 (RGB)
 PIN_RADIUS = 10                  # ピンの半径（ピクセル）
 
 # 3. グループ分け設定
-# ユーザー名を変更したい場合は、このリストを編集してください。
 USER_GROUPS = {
     # 赤グループのユーザー名リスト
     "RED_GROUP": [
@@ -45,8 +45,6 @@ USER_GROUPS = {
 # --- 環境変数からAPIキーを読み込み ---
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-# IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY') # 👈 IMGBBキーは不要に
-# 👈 Cloudinaryの認証情報を追加
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME') 
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
@@ -174,10 +172,10 @@ def send_map_with_pins(chat_id, participants):
         img = Image.open("Rosenzu.png").convert("RGB")
         draw = ImageDraw.Draw(img)
         
-        # ピンを打つ処理
+        # ピンを打つ処理 (ここで画像にピンが焼き付けられる)
         for username, data in participants.items():
             station_name = data["station"]
-            pin_color = get_pin_color(username) # ユーザー名から色を取得
+            pin_color = get_pin_color(username) 
             
             if station_name in STATION_COORDINATES:
                 x, y = STATION_COORDINATES[station_name]
@@ -199,15 +197,34 @@ def send_map_with_pins(chat_id, participants):
         return
 
     # 2. Cloudinaryにアップロード
-    # 👈 関数名を変更
-    image_url = upload_to_cloudinary(img_byte_arr) 
+    # 👈 public_id を取得
+    public_id = upload_to_cloudinary(img_byte_arr) 
     
     # 3. LINEに送信
-    if image_url:
+    if public_id:
+        
+        # CloudinaryのURL生成機能を使って、LINEに適したURLを動的に生成
+        # LINEのオリジナル画像URL (最大1024x1024)
+        original_url = cloudinary.utils.cloudinary_url(
+            public_id,
+            width=1024, # 最大幅を1024に指定
+            crop="limit",
+            secure=True,
+            format="png"
+        )[0] # [0]でURL文字列を取得
+        
+        # LINEのプレビュー画像URL (最大240x240)
+        preview_url = cloudinary.utils.cloudinary_url(
+            public_id,
+            width=240, # プレビュー幅を240に指定
+            crop="limit",
+            secure=True,
+            format="png"
+        )[0]
+        
         # 報告内容のテキストを生成
         report_text = f"🚨 参加者 **{REQUIRED_USERS} 人**分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
-            # どのグループかを付記
             group_color = "赤" if username in USER_GROUPS["RED_GROUP"] else "青" if username in USER_GROUPS["BLUE_GROUP"] else "不明(赤)"
             report_text += f"- **{data['username']}** ({group_color}G): **{data['station']}**\n"
         
@@ -217,8 +234,8 @@ def send_map_with_pins(chat_id, participants):
             [
                 TextSendMessage(text=report_text),
                 ImageSendMessage(
-                    original_content_url=image_url,
-                    preview_image_url=image_url 
+                    original_content_url=original_url, # 動的に生成したURLを使用
+                    preview_image_url=preview_url # 動的に生成したURLを使用
                 )
             ]
         )
@@ -229,27 +246,24 @@ def send_map_with_pins(chat_id, participants):
             TextSendMessage(text="エラー: 路線図画像のアップロードに失敗しました。")
         )
         
-    # メモリ内なので削除処理は不要
-
 
 # --- Cloudinaryアップロード関数 ---
 def upload_to_cloudinary(img_data):
-    """画像をCloudinaryにアップロードし、URLを返す"""
+    """画像をCloudinaryにアップロードし、公開IDを返す"""
     if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
         print("Cloudinaryの認証情報が設定されていません。")
         return None
 
     try:
         # Cloudinary Uploaderを使用してアップロード
-        # img_data (io.BytesIOオブジェクト) を直接渡す
         upload_result = cloudinary.uploader.upload(
             img_data, 
             resource_type="image", 
-            folder="tetsuoni_maps" # 任意のフォルダ名
+            folder="tetsuoni_maps" 
         )
         
-        # アップロードが成功した場合、URLを返す
-        return upload_result.get("secure_url")
+        # 成功した場合、public_id を返す
+        return upload_result.get("public_id") 
         
     except Exception as e:
         print(f"Cloudinaryアップロードエラー: {e}")
