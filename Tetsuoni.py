@@ -19,7 +19,7 @@ from station_data import STATION_COORDINATES
 # --- 設定項目（ここを変更して再デプロイしてください） ---
 
 # 1. 何人分のデータを集めるかの人数 (x)
-REQUIRED_USERS = 1 
+REQUIRED_USERS = 2
 
 # 2. ピン設定
 PIN_COLOR_RED = (255, 0, 0)      # 赤グループのピンの色 (RGB)
