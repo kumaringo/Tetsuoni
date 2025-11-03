@@ -20,7 +20,7 @@ app = Flask(__name__)
 # ==============================
 # 設定（必要ならここを編集）
 # ==============================
-REQUIRED_USERS = 3
+REQUIRED_USERS = 1
 PIN_COLOR_RED = (255, 0, 0)
 PIN_COLOR_BLUE = (0, 0, 255)
 PIN_RADIUS = 10
