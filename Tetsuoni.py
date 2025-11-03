@@ -235,8 +235,7 @@ def send_map_with_pins(chat_id, participants):
                 report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
 
             # デバッグ情報（Cloudinary に保存された実サイズ）
-            debug_text = f"(Cloudinary 保存サイズ: {uploaded_w}x{uploaded_h})"
-            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text + "\n" + debug_text))
+            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text))
 
             # 画像を送信
             line_bot_api.push_message(
