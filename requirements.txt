@@ -1,6 +1,9 @@
 flask
+gunicorn
 line-bot-sdk
 Pillow
-gunicorn
-requests
 cloudinary
+requests
+numpy>=2.1.0
+# optional: 高速ラベリングを使うなら
+scipy>=1.11.0
