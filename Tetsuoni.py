@@ -8,7 +8,6 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import cloudinary
 import cloudinary.uploader
-
 # station_data.py から座標データをインポート
 from station_data import STATION_COORDINATES
 
