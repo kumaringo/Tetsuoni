@@ -12,7 +12,7 @@ from station_data import STATION_COORDINATES
 
 app = Flask(__name__)
 
-REQUIRED_USERS = 1
+REQUIRED_USERS = 2
 PIN_COLOR_RED = (255, 0, 0)
 PIN_COLOR_BLUE = (0, 0, 255)
 PIN_RADIUS = 10
