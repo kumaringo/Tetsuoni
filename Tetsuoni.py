@@ -1,4 +1,3 @@
-# Tetsuoni.py
 import os
 import io
 from flask import Flask, request, abort
@@ -10,6 +9,7 @@ import cloudinary
 import cloudinary.uploader
 
 # 駅座標データ（ピクセル単位）
+# station_data.py が同じディレクトリにあることを確認してください
 from station_data import STATION_COORDINATES
 
 # ==============================
@@ -153,17 +153,19 @@ def handle_message(event):
         )
 
 # ==============================
-# ピン付きマップ送信
+# ピン付きマップ送信 (★★★ 修正版 ★★★)
 # ==============================
 def send_map_with_pins(chat_id, participants):
     """
     ピクセル座標に基づいてピンを描画し、Cloudinaryにアップロードして送信
+    (ローカルでのスケーリング処理を維持しつつ、LINE API要件に対応)
     """
     try:
         base_img = Image.open("Rosenzu.png").convert("RGB")
         orig_w, orig_h = base_img.size
 
-        # Cloudinaryへ元画像アップロード（勝手なリサイズを防ぐ）
+        # --- 既存のスケーリングロジック (変更なし) ---
+        # 1. Cloudinaryにベース画像をアップロードし、実際のサイズを取得
         buf = io.BytesIO()
         base_img.save(buf, format='PNG')
         buf.seek(0)
@@ -175,13 +177,16 @@ def send_map_with_pins(chat_id, participants):
             use_filename=True,
             unique_filename=False,
             overwrite=True,
-            transformation=[]  # ← Cloudinaryの自動リサイズ防止
+            transformation=[]  # Cloudinaryの自動リサイズ防止
         )
 
         uploaded_w = int(upload_info.get("width", orig_w))
         uploaded_h = int(upload_info.get("height", orig_h))
+        
+        # (デバッグ用) どのサイズで認識されたか確認
+        print(f"Original size: {orig_w}x{orig_h}, Cloudinary base size: {uploaded_w}x{uploaded_h}")
 
-        # サイズ補正（Cloudinaryが勝手に変えた場合対応）
+        # 2. 取得したサイズに基づいてローカルでリサイズ
         if (uploaded_w, uploaded_h) != (orig_w, orig_h):
             img = base_img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
         else:
@@ -189,56 +194,81 @@ def send_map_with_pins(chat_id, participants):
 
         draw = ImageDraw.Draw(img)
 
+        # 3. スケールを計算
         scale_x = uploaded_w / orig_w
         scale_y = uploaded_h / orig_h
         scaled_radius = max(2, int(PIN_RADIUS * (scale_x + scale_y) / 2))
 
-        # ==== ピン描画 ====
+        # 4. ピンをローカルの 'img' に描画
         print("描画対象:", participants)
         for username, data in participants.items():
             station = data["station"]
             if station not in STATION_COORDINATES:
                 continue
 
-            x_raw, y_raw = STATION_COORDINATES[station]  # ピクセル座標
-            x = int(x_raw * scale_x)
-            y = int(y_raw * scale_y)
+            x_raw, y_raw = STATION_COORDINATES[station]  # 元のピクセル座標
+            x = int(x_raw * scale_x) # スケーリング適用
+            y = int(y_raw * scale_y) # スケーリング適用
 
             color = get_pin_color(username)
 
-            # ピン描画（黒い枠つき）
             draw.ellipse(
                 (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
                 fill=color,
                 outline=(0, 0, 0),
                 width=2
             )
+        # --- 既存のスケーリングロジック (ここまで) ---
 
-        # ==== 再アップロード ====
+
+        # ==== ★★★ 修正点 ここから ★★★ ====
+        # ローカルで描画済みの画像(img)を、LINE要件に合わせてアップロード
+
         buf_out = io.BytesIO()
-        img.save(buf_out, format='PNG')
+        img.save(buf_out, format='PNG') # ピン描画済みの画像を保存
         buf_out.seek(0)
 
+        # 1. 本画像用 (1024x1024以内のPNG)
+        main_image_transform = [
+            {'width': 1024, 'height': 1024, 'crop': 'limit', 'format': 'png'}
+        ]
+        
+        # 2. プレビュー用 (240x240以内のJPEG)
+        eager_preview_transform = {
+            'width': 240, 'height': 240, 'crop': 'limit', 'format': 'jpg'
+        }
+
+        # 描画済みの画像を、LINE要件に合わせて2種類生成するようアップロード
         final_upload = cloudinary.uploader.upload(
-            buf_out,
+            buf_out, 
             resource_type="image",
             folder="tetsuoni_maps",
             use_filename=True,
-            unique_filename=True
+            unique_filename=True,
+            transformation=main_image_transform, # ← 本画像用 (1024x1024 PNG)
+            eager=[eager_preview_transform]      # ← プレビュー用 (240x240 JPG)
         )
 
-        final_url = final_upload.get("secure_url", None)
-        print("✅ Cloudinary final_url:", final_url)
+        # 2つの異なるURLを正しく取得する
+        final_url = final_upload.get("secure_url") # 1024x1024 PNGのURL
+        
+        preview_url = None
+        if final_upload.get("eager"):
+            preview_url = final_upload["eager"][0].get("secure_url") # 240x240 JPGのURL
 
-        if not final_url:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="アップロード失敗"))
+        print("✅ Cloudinary final_url (Original):", final_url)
+        print("✅ Cloudinary preview_url (Preview):", preview_url)
+
+        if not final_url or not preview_url:
+            line_bot_api.push_message(chat_id, TextSendMessage(text="画像アップロードに失敗しました。"))
             return
+        # ==== ★★★ 修正点 ここまで ★★★ ====
 
         # 集計テキスト
         summary = "🚉 全員の報告が揃いました！\n\n"
         for u, d in participants.items():
             group_color = (
-                "赤" if u in USER_GROUPS.get("RED_GROUP", []) else
+                "赤" if u in USER_GOVERNMENT.get("RED_GROUP", []) else
                 "青" if u in USER_GROUPS.get("BLUE_GROUP", []) else "不明"
             )
             summary += f"- {d['username']} ({group_color}G): {d['station']}\n"
@@ -246,9 +276,12 @@ def send_map_with_pins(chat_id, participants):
         # 送信
         try:
             line_bot_api.push_message(chat_id, TextSendMessage(text=summary))
+            
+            # ★★★ 修正点 ★★★
+            # 2つの異なるURLを正しく指定する
             line_bot_api.push_message(chat_id, ImageSendMessage(
-                original_content_url=final_url,
-                preview_image_url=final_url
+                original_content_url=final_url,    # 本画像URL (1024x1024 PNG)
+                preview_image_url=preview_url      # プレビュー専用URL (240x240 JPG)
             ))
             print("✅ LINE送信完了")
         except Exception as e:
