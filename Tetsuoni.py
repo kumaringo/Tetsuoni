@@ -9,16 +9,16 @@ from PIL import Image, ImageDraw
 import cloudinary
 import cloudinary.uploader
 
-# station_data.py から座標データをインポート
+# 駅座標データ（ピクセル単位）
 from station_data import STATION_COORDINATES
 
 # ==============================
-# Flask app (トップレベルで app を定義)
+# Flask app
 # ==============================
 app = Flask(__name__)
 
 # ==============================
-# 設定
+# 定数設定
 # ==============================
 REQUIRED_USERS = 1  # 必要人数
 PIN_COLOR_RED = (255, 0, 0)
@@ -37,7 +37,7 @@ USER_GROUPS = {
 }
 
 # ==============================
-# 環境変数 & Cloudinary 設定
+# 環境変数
 # ==============================
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
@@ -157,13 +157,13 @@ def handle_message(event):
 # ==============================
 def send_map_with_pins(chat_id, participants):
     """
-    Cloudinary上の実サイズに基づき、ピンを描画して送信
+    ピクセル座標に基づいてピンを描画し、Cloudinaryにアップロードして送信
     """
     try:
         base_img = Image.open("Rosenzu.png").convert("RGB")
         orig_w, orig_h = base_img.size
 
-        # Cloudinaryへ元画像アップロード
+        # Cloudinaryへ元画像アップロード（勝手なリサイズを防ぐ）
         buf = io.BytesIO()
         base_img.save(buf, format='PNG')
         buf.seek(0)
@@ -174,13 +174,14 @@ def send_map_with_pins(chat_id, participants):
             folder="tetsuoni_maps",
             use_filename=True,
             unique_filename=False,
-            overwrite=True
+            overwrite=True,
+            transformation=[]  # ← Cloudinaryの自動リサイズ防止
         )
 
         uploaded_w = int(upload_info.get("width", orig_w))
         uploaded_h = int(upload_info.get("height", orig_h))
 
-        # サイズ補正
+        # サイズ補正（Cloudinaryが勝手に変えた場合対応）
         if (uploaded_w, uploaded_h) != (orig_w, orig_h):
             img = base_img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
         else:
@@ -190,21 +191,30 @@ def send_map_with_pins(chat_id, participants):
 
         scale_x = uploaded_w / orig_w
         scale_y = uploaded_h / orig_h
-        scaled_radius = max(1, int(PIN_RADIUS * (scale_x + scale_y) / 2))
+        scaled_radius = max(2, int(PIN_RADIUS * (scale_x + scale_y) / 2))
 
-        # ピン描画
+        # ==== ピン描画 ====
+        print("描画対象:", participants)
         for username, data in participants.items():
             station = data["station"]
             if station not in STATION_COORDINATES:
                 continue
-            x_ratio, y_ratio = STATION_COORDINATES[station]
-            x = int(x_ratio * uploaded_w)
-            y = int(y_ratio * uploaded_h)
-            color = get_pin_color(username)
-            draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
-                         fill=color, outline=color)
 
-        # 再アップロード
+            x_raw, y_raw = STATION_COORDINATES[station]  # ピクセル座標
+            x = int(x_raw * scale_x)
+            y = int(y_raw * scale_y)
+
+            color = get_pin_color(username)
+
+            # ピン描画（黒い枠つき）
+            draw.ellipse(
+                (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
+                fill=color,
+                outline=(0, 0, 0),
+                width=2
+            )
+
+        # ==== 再アップロード ====
         buf_out = io.BytesIO()
         img.save(buf_out, format='PNG')
         buf_out.seek(0)
@@ -218,6 +228,8 @@ def send_map_with_pins(chat_id, participants):
         )
 
         final_url = final_upload.get("secure_url", None)
+        print("✅ Cloudinary final_url:", final_url)
+
         if not final_url:
             line_bot_api.push_message(chat_id, TextSendMessage(text="アップロード失敗"))
             return
@@ -231,11 +243,20 @@ def send_map_with_pins(chat_id, participants):
             )
             summary += f"- {d['username']} ({group_color}G): {d['station']}\n"
 
-        # 送信（reply_messageではなくpush_messageを2連で安定送信）
-        line_bot_api.push_message(chat_id, TextSendMessage(text=summary))
-        line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=final_url, preview_image_url=final_url))
+        # 送信
+        try:
+            line_bot_api.push_message(chat_id, TextSendMessage(text=summary))
+            line_bot_api.push_message(chat_id, ImageSendMessage(
+                original_content_url=final_url,
+                preview_image_url=final_url
+            ))
+            print("✅ LINE送信完了")
+        except Exception as e:
+            print("❌ 送信エラー:", e)
+            line_bot_api.push_message(chat_id, TextSendMessage(text=f"送信エラー: {e}"))
 
     except Exception as e:
+        print("❌ 全体エラー:", e)
         line_bot_api.push_message(chat_id, TextSendMessage(text=f"エラーが発生しました: {e}"))
 
 # ==============================
