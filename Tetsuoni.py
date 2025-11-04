@@ -18,9 +18,9 @@ from station_data import STATION_COORDINATES
 app = Flask(__name__)
 
 # ==============================
-# 設定（必要ならここを編集）
+# 設定
 # ==============================
-REQUIRED_USERS = 1
+REQUIRED_USERS = 1  # 必要人数
 PIN_COLOR_RED = (255, 0, 0)
 PIN_COLOR_BLUE = (0, 0, 255)
 PIN_RADIUS = 10
@@ -37,7 +37,7 @@ USER_GROUPS = {
 }
 
 # ==============================
-# 環境変数読み込み / Cloudinary 設定
+# 環境変数 & Cloudinary 設定
 # ==============================
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
@@ -59,16 +59,16 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ==============================
-# 参加者データ保持
+# データ保持
 # ==============================
 participant_data = {}
 users_participated = {}
 
 # ==============================
-# ヘルパー
+# ユーティリティ
 # ==============================
 def get_pin_color(username):
-    """ユーザー名に基づいてピンの色を決定（RGBタプルを返す）"""
+    """ユーザー名でピン色を決定"""
     if username in USER_GROUPS.get("BLUE_GROUP", []):
         return PIN_COLOR_BLUE
     return PIN_COLOR_RED
@@ -80,12 +80,11 @@ def get_pin_color(username):
 def callback():
     signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
 
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        print("Invalid signature. Please check your channel access token/secret.")
+        print("Invalid signature.")
         abort(400)
 
     return 'OK'
@@ -96,16 +95,16 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip() if event.message and event.message.text else ""
-    # グループ or ルーム ID を取得
+
+    # グループ / ルーム / 個別トークを区別
     if event.source.type == 'group':
         chat_id = event.source.group_id
     elif event.source.type == 'room':
         chat_id = event.source.room_id
     else:
-        # 個別トークの場合は user_id を使う（必要なら）
         chat_id = event.source.user_id
 
-    # ユーザー名を取得
+    # ユーザー名取得
     try:
         user_id = event.source.user_id
         if event.source.type == 'group':
@@ -118,17 +117,17 @@ def handle_message(event):
     except Exception:
         username = "Unknown User"
 
-    # 初期化
+    # グループごとの初期化
     if chat_id not in participant_data:
         participant_data[chat_id] = {}
         users_participated[chat_id] = set()
 
-    # 駅名がSTATION_COORDINATESにあれば登録
+    # 駅名が存在するかチェック
     if text in STATION_COORDINATES:
         if username in users_participated[chat_id]:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=f'{username}さん、駅はすでに報告済みです。')
+                TextSendMessage(text=f'{username}さん、すでに報告済みです。')
             )
             return
 
@@ -138,149 +137,110 @@ def handle_message(event):
         current_count = len(users_participated[chat_id])
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
+            TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} / {REQUIRED_USERS} 人')
         )
 
         if current_count >= REQUIRED_USERS:
             send_map_with_pins(chat_id, participant_data[chat_id])
             participant_data[chat_id] = {}
             users_participated[chat_id] = set()
+
     else:
         # 未知の駅名
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f'「{text}」 はデータに存在しない駅名です。正しい駅名を報告してください。')
+            TextSendMessage(text=f'「{text}」 はデータに存在しません。')
         )
 
 # ==============================
-# 画像処理: 実保存サイズに合わせてリサイズ → ピン描画 → 再アップロード → LINE送信
+# ピン付きマップ送信
 # ==============================
 def send_map_with_pins(chat_id, participants):
     """
-    Cloudinary 側の実際サイズに合わせて画像をリサイズ → ピンを描画 → 再アップロード → LINE送信
-    participants: { username: {"username": str, "station": station_name}, ... }
+    Cloudinary上の実サイズに基づき、ピンを描画して送信
     """
     try:
-        # 1) 元画像を読み込み（Rosenzu.png はプロジェクトルートに配置）
-        orig_path = "Rosenzu.png"
-        orig_img = Image.open(orig_path).convert("RGB")
-        orig_w, orig_h = orig_img.size  # 例: 1000,1000 (元基準)
+        base_img = Image.open("Rosenzu.png").convert("RGB")
+        orig_w, orig_h = base_img.size
 
-        # 2) 元画像を変換なしで一度 Cloudinary にアップロードして、Cloudinary に保存されたサイズを取得
-        buf_base = io.BytesIO()
-        orig_img.save(buf_base, format='PNG')
-        buf_base.seek(0)
+        # Cloudinaryへ元画像アップロード
+        buf = io.BytesIO()
+        base_img.save(buf, format='PNG')
+        buf.seek(0)
 
-        base_upload = cloudinary.uploader.upload(
-            buf_base,
+        upload_info = cloudinary.uploader.upload(
+            buf,
             resource_type="image",
             folder="tetsuoni_maps",
             use_filename=True,
             unique_filename=False,
             overwrite=True
         )
-        if not base_upload:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="Cloudinary にベース画像をアップできませんでした。"))
-            return
 
-        uploaded_w = int(base_upload.get("width", orig_w))
-        uploaded_h = int(base_upload.get("height", orig_h))
+        uploaded_w = int(upload_info.get("width", orig_w))
+        uploaded_h = int(upload_info.get("height", orig_h))
 
-        # 3) Cloudinary に保存されたサイズに合わせてローカル画像をリサイズ
+        # サイズ補正
         if (uploaded_w, uploaded_h) != (orig_w, orig_h):
-            img = orig_img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
+            img = base_img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
         else:
-            img = orig_img.copy()
+            img = base_img.copy()
 
         draw = ImageDraw.Draw(img)
 
-        # 4) 元座標(=STATION_COORDINATES の基準: e.g. 1000x1000) に対するスケールを計算
         scale_x = uploaded_w / orig_w
         scale_y = uploaded_h / orig_h
-        avg_scale = (scale_x + scale_y) / 2.0
-        scaled_radius = max(1, int(PIN_RADIUS * avg_scale))
+        scaled_radius = max(1, int(PIN_RADIUS * (scale_x + scale_y) / 2))
 
-        # 5) 各参加者の駅にピンを描画
+        # ピン描画
         for username, data in participants.items():
-            station_name = data.get("station")
-            pin_color = get_pin_color(username)
-            if station_name in STATION_COORDINATES:
-                # STATION_COORDINATES は (x,y) タプルの辞書であることを想定
-                x0, y0 = STATION_COORDINATES[station_name]
-                x = int(x0 * scale_x)
-                y = int(y0 * scale_y)
-                draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
-                             fill=pin_color, outline=pin_color)
+            station = data["station"]
+            if station not in STATION_COORDINATES:
+                continue
+            x_ratio, y_ratio = STATION_COORDINATES[station]
+            x = int(x_ratio * uploaded_w)
+            y = int(y_ratio * uploaded_h)
+            color = get_pin_color(username)
+            draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
+                         fill=color, outline=color)
 
-        # 6) 描画済み画像をメモリに保存して Cloudinary に再アップロード
-        out_buf = io.BytesIO()
-        img.save(out_buf, format='PNG')
-        out_buf.seek(0)
+        # 再アップロード
+        buf_out = io.BytesIO()
+        img.save(buf_out, format='PNG')
+        buf_out.seek(0)
 
         final_upload = cloudinary.uploader.upload(
-            out_buf,
+            buf_out,
             resource_type="image",
             folder="tetsuoni_maps",
             use_filename=True,
             unique_filename=True
         )
 
-        image_url = final_upload.get("secure_url") if final_upload else None
+        final_url = final_upload.get("secure_url", None)
+        if not final_url:
+            line_bot_api.push_message(chat_id, TextSendMessage(text="アップロード失敗"))
+            return
 
-        # 7) LINE に結果を送信
-        if image_url:
-            report_text = f"🚨 参加者 {REQUIRED_USERS} 人分のデータが集まりました！ 🚨\n\n"
-            for username, data in participants.items():
-                group_color = "赤" if username in USER_GROUPS.get("RED_GROUP", []) else "青" if username in USER_GROUPS.get("BLUE_GROUP", []) else "不明(赤)"
-                report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
-
-            # デバッグ情報（Cloudinary に保存された実サイズ）
-            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text))
-
-            # 画像を送信
-            line_bot_api.push_message(
-                chat_id,
-                ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
+        # 集計テキスト
+        summary = "🚉 全員の報告が揃いました！\n\n"
+        for u, d in participants.items():
+            group_color = (
+                "赤" if u in USER_GROUPS.get("RED_GROUP", []) else
+                "青" if u in USER_GROUPS.get("BLUE_GROUP", []) else "不明"
             )
-        else:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: 描画済み画像のアップロードに失敗しました。"))
+            summary += f"- {d['username']} ({group_color}G): {d['station']}\n"
 
-    except FileNotFoundError:
-        line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: Rosenzu.png が見つかりません。"))
+        # 送信（reply_messageではなくpush_messageを2連で安定送信）
+        line_bot_api.push_message(chat_id, TextSendMessage(text=summary))
+        line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=final_url, preview_image_url=final_url))
+
     except Exception as e:
-        line_bot_api.push_message(chat_id, TextSendMessage(text=f"エラー: 画像処理で問題が発生しました: {e}"))
+        line_bot_api.push_message(chat_id, TextSendMessage(text=f"エラーが発生しました: {e}"))
 
 # ==============================
-# 補助: (必要なら別途使う) upload_to_cloudinary 関数
-# ==============================
-def upload_to_cloudinary(img_data):
-    """
-    画像をCloudinaryにアップロードし、(secure_url, upload_result) を返す
-    （変換を避けたい場合は transformation を付けないで利用）
-    """
-    if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
-        print("Cloudinaryの認証情報が設定されていません。")
-        return None, {}
-
-    try:
-        upload_result = cloudinary.uploader.upload(
-            img_data,
-            resource_type="image",
-            folder="tetsuoni_maps",
-            use_filename=True,
-            unique_filename=False,
-            overwrite=True,
-            # transformation=[{"width": 1000, "height": 1000, "crop": "limit"}]  # 必要なら有効化
-        )
-        secure_url = upload_result.get('secure_url')
-        return secure_url, upload_result
-    except Exception as e:
-        print(f"Cloudinaryアップロードエラー: {e}")
-        return None, {}
-
-# ==============================
-# アプリ起動（ローカル用）
+# ローカル起動
 # ==============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host="0.0.0.0", port=port)
