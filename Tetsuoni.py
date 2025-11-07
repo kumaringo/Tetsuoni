@@ -1,4 +1,5 @@
-# Tetsuoni.py (修正版)
+# Tetsuoni.py（保存サイズ非表示 + デフォルト青ピン 修正版）
+
 import os
 import io
 from flask import Flask, request, abort
@@ -33,13 +34,12 @@ except ValueError:
 
 USER_GROUPS = {
     "RED_GROUP": [
-        "なりこう"
-        "小林　礼旺"
-        "ひさちゃん"
-        "上山of鉄オタ"
+        "茂野大雅",
+        "茂野大雅あ"
     ],
     "BLUE_GROUP": [
-        
+        "茂野大雅い",
+        "茂野大雅う"
     ]
 }
 
@@ -66,8 +66,7 @@ users_participated = {}
 def get_pin_color(username):
     if username in USER_GROUPS.get("RED_GROUP", []):
         return PIN_COLOR_RED
-    return PIN_COLOR_BLUE  # ← デフォルトを青に変更
-
+    return PIN_COLOR_BLUE  # デフォルト青ピン
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -115,35 +114,27 @@ def handle_message(event):
     # 駅名が正しければ participants に追加／更新
     if text in STATION_COORDINATES:
         is_update = username in users_participated[chat_id]
-        # 新規 or 更新の両方で participant_data を上書きする（更新は置き換え）
         participant_data[chat_id][username] = {"username": username, "station": text}
-        # 新規なら set に追加、更新なら既にあるので追加は不要
         users_participated[chat_id].add(username)
 
         current_count = len(users_participated[chat_id])
 
         if is_update:
-            # 既報告者の更新時は更新メッセージを返す（閾値チェックは行う）
-            # もし既に閾値に達していて、更新後に送信したければここで送ることも可能だが、
-            # 基本は「報告完了／更新しました」のみ返しておく。
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text=f'{username}さんの報告を「{text}」に更新しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
             )
-            # もし更新で閾値に達していれば一緒に送る（optional）
             if current_count >= REQUIRED_USERS:
                 send_map_with_pins(chat_id, participant_data[chat_id], reply_token=event.reply_token)
                 participant_data[chat_id] = {}
                 users_participated[chat_id] = set()
             return
 
-        # 新規報告の場合は閾値チェック
         if current_count >= REQUIRED_USERS:
             send_map_with_pins(chat_id, participant_data[chat_id], reply_token=event.reply_token)
             participant_data[chat_id] = {}
             users_participated[chat_id] = set()
         else:
-            # 閾値に達していない場合は通常の確認メッセージを reply
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
@@ -157,26 +148,19 @@ def handle_message(event):
 def send_map_with_pins(chat_id, participants, reply_token=None):
     try:
         orig_path = "Rosenzu.png"
-        # 元画像を RGBA で開く（透過を扱えるように）
         orig_img = Image.open(orig_path).convert("RGBA")
         orig_w, orig_h = orig_img.size
 
         # ---- 透過 70% の処理 ----
-        # 元のアルファを壊さずに全体の不透明度を 70% にする
-        target_alpha = int(255 * 0.7)  # 70%
+        target_alpha = int(255 * 0.7)
         r, g, b, a = orig_img.split()
-        # combine: a を target_alpha に置き換える（元に alpha がある場合はそれを乗算してもよいが
-        # 単純化のために一律 70% を適用）
         new_alpha = Image.new('L', orig_img.size, color=target_alpha)
         orig_img.putalpha(new_alpha)
 
-        # 白背景に合成して、地図が薄く (70%) 見えるようにする
         background = Image.new("RGBA", (orig_w, orig_h), (255, 255, 255, 255))
         background.paste(orig_img, (0, 0), orig_img)
-        # 以降は背景（RGBA）にピンを描画していく
         img = background
 
-        # まずベース画像（透過適用済み）を一度 Cloudinary に保存しておく（デバッグ用）
         buf_base = io.BytesIO()
         img.save(buf_base, format='PNG')
         buf_base.seek(0)
@@ -190,16 +174,16 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             overwrite=True
         )
         if not base_upload:
+            msg = "Cloudinary にベース画像をアップできませんでした。"
             if reply_token:
-                line_bot_api.reply_message(reply_token, TextSendMessage(text="Cloudinary にベース画像をアップできませんでした。"))
+                line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
             else:
-                line_bot_api.push_message(chat_id, TextSendMessage(text="Cloudinary にベース画像をアップできませんでした。"))
+                line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
             return
 
         uploaded_w = int(base_upload.get("width", orig_w))
         uploaded_h = int(base_upload.get("height", orig_h))
 
-        # Cloudinary に保存されたサイズと元のサイズが違えばリサイズ（以降は img を操作）
         if (uploaded_w, uploaded_h) != (orig_w, orig_h):
             img = img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
         else:
@@ -209,7 +193,6 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
 
         scale_x = uploaded_w / orig_w
         scale_y = uploaded_h / orig_h
-        # 平均スケールで円サイズを乗算（縦横比差を平均化）
         avg_scale = (scale_x + scale_y) / 2.0
         scaled_radius = max(1, int(PIN_RADIUS * avg_scale))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * avg_scale))
@@ -221,24 +204,19 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                 x0, y0 = STATION_COORDINATES[station_name]
                 x = int(x0 * scale_x)
                 y = int(y0 * scale_y)
-
-                # まず黒い外枠（少し大きめ）を描く
                 outline_radius = scaled_radius + outline_extra
                 draw.ellipse(
                     (x - outline_radius, y - outline_radius, x + outline_radius, y + outline_radius),
                     fill=(0, 0, 0),
                     outline=(0, 0, 0)
                 )
-                # その上にピン本体を描く
                 draw.ellipse(
                     (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
                     fill=pin_color,
                     outline=pin_color
                 )
 
-        # 出力バッファに保存
         out_buf = io.BytesIO()
-        # PNG で保存（RGBA を保持）
         img.save(out_buf, format='PNG')
         out_buf.seek(0)
 
@@ -254,40 +232,39 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
 
         report_text = f"🚨 参加者 {len(participants)} 人分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
-            group_color = "赤" if username in USER_GROUPS.get("RED_GROUP", []) else "青" if username in USER_GROUPS.get("BLUE_GROUP", []) else "不明(赤)"
+            group_color = "赤" if username in USER_GROUPS.get("RED_GROUP", []) else "青" if username in USER_GROUPS.get("BLUE_GROUP", []) else "青(不明)"
             report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
-        debug_text = f"(Cloudinary 保存サイズ: {uploaded_w}x{uploaded_h})"
 
-        # reply_token がある時は reply_message で一度に返す
         if image_url and reply_token:
             line_bot_api.reply_message(
                 reply_token,
                 [
-                    TextSendMessage(text=report_text + "\n" + debug_text),
+                    TextSendMessage(text=report_text),
                     ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
                 ]
             )
         elif image_url:
-            # reply_token が無い場合は push_message にフォールバック
-            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text + "\n" + debug_text))
+            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text))
             line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
         else:
+            msg = "エラー: 描画済み画像のアップロードに失敗しました。"
             if reply_token:
-                line_bot_api.reply_message(reply_token, TextSendMessage(text="エラー: 描画済み画像のアップロードに失敗しました。"))
+                line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
             else:
-                line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: 描画済み画像のアップロードに失敗しました。"))
+                line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
 
     except FileNotFoundError:
+        msg = "エラー: Rosenzu.png が見つかりません。"
         if reply_token:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text="エラー: Rosenzu.png が見つかりません。"))
+            line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
         else:
-            line_bot_api.push_message(chat_id, TextSendMessage(text="エラー: Rosenzu.png が見つかりません。"))
+            line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
     except Exception as e:
-        # デバッグしやすいようにエラーメッセージを送る
+        msg = f"エラー: 画像処理で問題が発生しました: {e}"
         if reply_token:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text=f"エラー: 画像処理で問題が発生しました: {e}"))
+            line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
         else:
-            line_bot_api.push_message(chat_id, TextSendMessage(text=f"エラー: 画像処理で問題が発生しました: {e}"))
+            line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
