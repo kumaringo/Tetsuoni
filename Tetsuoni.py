@@ -34,12 +34,13 @@ except ValueError:
 
 USER_GROUPS = {
     "RED_GROUP": [
-        "茂野大雅",
-        "茂野大雅あ"
+        "なりこう",
+        "ひさちゃん",
+        "上山of鉄オタ",
+        "小林　礼旺"
     ],
     "BLUE_GROUP": [
-        "茂野大雅い",
-        "茂野大雅う"
+        
     ]
 }
 
