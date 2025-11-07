@@ -33,12 +33,13 @@ except ValueError:
 
 USER_GROUPS = {
     "RED_GROUP": [
-        "茂野大雅",
-        "茂野大雅あ"
+        "なりこう"
+        "小林　礼旺"
+        "ひさちゃん"
+        "上山of鉄オタ"
     ],
     "BLUE_GROUP": [
-        "茂野大雅い",
-        "茂野大雅う"
+        
     ]
 }
 
@@ -63,9 +64,10 @@ participant_data = {}
 users_participated = {}
 
 def get_pin_color(username):
-    if username in USER_GROUPS.get("BLUE_GROUP", []):
-        return PIN_COLOR_BLUE
-    return PIN_COLOR_RED
+    if username in USER_GROUPS.get("RED_GROUP", []):
+        return PIN_COLOR_RED
+    return PIN_COLOR_BLUE  # ← デフォルトを青に変更
+
 
 @app.route("/callback", methods=['POST'])
 def callback():
