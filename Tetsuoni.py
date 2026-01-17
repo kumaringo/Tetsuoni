@@ -1,4 +1,4 @@
-# Tetsuoni.py（保存サイズ非表示 + デフォルト青ピン 修正版）
+# Tetsuoni.py（保存サイズ非表示 + デフォルト青ピン + /開始無視 修正版）
 
 import os
 import io
@@ -9,11 +9,12 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSend
 from PIL import Image, ImageDraw
 import cloudinary
 import cloudinary.uploader
+# station_data.py から STATION_COORDINATES をインポート
 from station_data import STATION_COORDINATES
 
 app = Flask(__name__)
 
-# REQUIRED_USERS を環境変数で上書き可能に（デフォルト 2）
+# --- 設定（環境変数） ---
 try:
     REQUIRED_USERS = int(os.environ.get('REQUIRED_USERS', '2'))
 except ValueError:
@@ -21,31 +22,31 @@ except ValueError:
 
 PIN_COLOR_RED = (255, 0, 0)
 PIN_COLOR_BLUE = (0, 0, 255)
-# PIN_RADIUS を環境変数で調整できるように（省略時は 10）
+
 try:
     PIN_RADIUS = int(os.environ.get('PIN_RADIUS', '10'))
 except ValueError:
     PIN_RADIUS = 10
-# 外枠幅（ピクセル）
+
 try:
     PIN_OUTLINE_WIDTH = int(os.environ.get('PIN_OUTLINE_WIDTH', '2'))
 except ValueError:
     PIN_OUTLINE_WIDTH = 2
 
+# グループ分け設定
 USER_GROUPS = {
     "RED_GROUP": [
         "なりこう",
         "小林",
         "川戸",
-        "上山of鉄オタ"
-        "Bootaro"
+        "上山of鉄オタ",
+        "Bootaro",
         "麻生皐聖"
     ],
-    "BLUE_GROUP": [
-        
-    ]
+    "BLUE_GROUP": []
 }
 
+# LINE & Cloudinary 設定
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
@@ -62,7 +63,7 @@ cloudinary.config(
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# chat_id 単位で集計
+# 状態保持用変数
 participant_data = {}
 users_participated = {}
 
@@ -76,20 +77,21 @@ def callback():
     signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
-
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        print("Invalid signature. Please check your channel access token/secret.")
         abort(400)
-
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip() if event.message and event.message.text else ""
 
-    # group/room/user の id を chat_id にする
+    # 【追加機能】1文字目が / で始まる場合は無視する
+    if text.startswith('/'):
+        return
+
+    # ID取得
     if event.source.type == 'group':
         chat_id = event.source.group_id
     elif event.source.type == 'room':
@@ -97,7 +99,7 @@ def handle_message(event):
     else:
         chat_id = event.source.user_id
 
-    # ユーザー名を取得（失敗したら Unknown User）
+    # プロフィール取得
     try:
         user_id = event.source.user_id
         if event.source.type == 'group':
@@ -114,12 +116,11 @@ def handle_message(event):
         participant_data[chat_id] = {}
         users_participated[chat_id] = set()
 
-    # 駅名が正しければ participants に追加／更新
+    # 駅名判定処理
     if text in STATION_COORDINATES:
         is_update = username in users_participated[chat_id]
         participant_data[chat_id][username] = {"username": username, "station": text}
         users_participated[chat_id].add(username)
-
         current_count = len(users_participated[chat_id])
 
         if is_update:
@@ -143,6 +144,7 @@ def handle_message(event):
                 TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
             )
     else:
+        # 正しくない駅名（かつ / で始まらない）場合のみエラーを返す
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f'「{text}」 はデータに存在しない駅名です。正しい駅名を報告してください。')
@@ -154,7 +156,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         orig_img = Image.open(orig_path).convert("RGBA")
         orig_w, orig_h = orig_img.size
 
-        # ---- 透過 70% の処理 ----
+        # 透過 70% 処理
         target_alpha = int(255 * 0.7)
         r, g, b, a = orig_img.split()
         new_alpha = Image.new('L', orig_img.size, color=target_alpha)
@@ -176,13 +178,9 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             unique_filename=False,
             overwrite=True
         )
+
         if not base_upload:
-            msg = "Cloudinary にベース画像をアップできませんでした。"
-            if reply_token:
-                line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
-            else:
-                line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
-            return
+            raise Exception("Cloudinary base upload failed")
 
         uploaded_w = int(base_upload.get("width", orig_w))
         uploaded_h = int(base_upload.get("height", orig_h))
@@ -193,7 +191,6 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             img = img.copy()
 
         draw = ImageDraw.Draw(img)
-
         scale_x = uploaded_w / orig_w
         scale_y = uploaded_h / orig_h
         avg_scale = (scale_x + scale_y) / 2.0
@@ -235,7 +232,8 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
 
         report_text = f"🚨 参加者 {len(participants)} 人分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
-            group_color = "赤" if username in USER_GROUPS.get("RED_GROUP", []) else "青" if username in USER_GROUPS.get("BLUE_GROUP", []) else "青(不明)"
+            is_red = username in USER_GROUPS.get("RED_GROUP", [])
+            group_color = "赤" if is_red else "青"
             report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
 
         if image_url and reply_token:
@@ -249,21 +247,9 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         elif image_url:
             line_bot_api.push_message(chat_id, TextSendMessage(text=report_text))
             line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
-        else:
-            msg = "エラー: 描画済み画像のアップロードに失敗しました。"
-            if reply_token:
-                line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
-            else:
-                line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
 
-    except FileNotFoundError:
-        msg = "エラー: Rosenzu.png が見つかりません。"
-        if reply_token:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
-        else:
-            line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
     except Exception as e:
-        msg = f"エラー: 画像処理で問題が発生しました: {e}"
+        msg = f"エラー: 画像処理または送信で問題が発生しました: {e}"
         if reply_token:
             line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
         else:
