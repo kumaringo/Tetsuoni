@@ -1,12 +1,10 @@
-# Tetsuoni.py（保存サイズ非表示 + デフォルト青ピン + /開始無視 修正版）
-
 import os
 import io
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont # ImageFontを追加
 import cloudinary
 import cloudinary.uploader
 # station_data.py から STATION_COORDINATES をインポート
@@ -22,6 +20,7 @@ except ValueError:
 
 PIN_COLOR_RED = (255, 0, 0)
 PIN_COLOR_BLUE = (0, 0, 255)
+PIN_COLOR_PURPLE = (128, 0, 128) # 紫を追加
 
 try:
     PIN_RADIUS = int(os.environ.get('PIN_RADIUS', '10'))
@@ -37,8 +36,8 @@ except ValueError:
 USER_GROUPS = {
     "RED_GROUP": [
         "なりこう",
-        "小林",
-        "川戸",
+        "小林礼旺",
+        "川戸健裕",
         "上山of鉄オタ",
         "Bootaro",
         "麻生皐聖"
@@ -69,8 +68,8 @@ users_participated = {}
 
 def get_pin_color(username):
     if username in USER_GROUPS.get("RED_GROUP", []):
-        return PIN_COLOR_RED
-    return PIN_COLOR_BLUE  # デフォルト青ピン
+        return "RED"
+    return "BLUE"
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -87,11 +86,9 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip() if event.message and event.message.text else ""
 
-    # 【追加機能】1文字目が / で始まる場合は無視する
     if text.startswith('/'):
         return
 
-    # ID取得
     if event.source.type == 'group':
         chat_id = event.source.group_id
     elif event.source.type == 'room':
@@ -99,7 +96,6 @@ def handle_message(event):
     else:
         chat_id = event.source.user_id
 
-    # プロフィール取得
     try:
         user_id = event.source.user_id
         if event.source.type == 'group':
@@ -116,7 +112,6 @@ def handle_message(event):
         participant_data[chat_id] = {}
         users_participated[chat_id] = set()
 
-    # 駅名判定処理
     if text in STATION_COORDINATES:
         is_update = username in users_participated[chat_id]
         participant_data[chat_id][username] = {"username": username, "station": text}
@@ -144,7 +139,6 @@ def handle_message(event):
                 TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
             )
     else:
-        # 正しくない駅名（かつ / で始まらない）場合のみエラーを返す
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f'「{text}」 はデータに存在しない駅名です。正しい駅名を報告してください。')
@@ -158,7 +152,6 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
 
         # 透過 70% 処理
         target_alpha = int(255 * 0.7)
-        r, g, b, a = orig_img.split()
         new_alpha = Image.new('L', orig_img.size, color=target_alpha)
         orig_img.putalpha(new_alpha)
 
@@ -179,9 +172,6 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             overwrite=True
         )
 
-        if not base_upload:
-            raise Exception("Cloudinary base upload failed")
-
         uploaded_w = int(base_upload.get("width", orig_w))
         uploaded_h = int(base_upload.get("height", orig_h))
 
@@ -197,24 +187,63 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         scaled_radius = max(1, int(PIN_RADIUS * avg_scale))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * avg_scale))
 
+        # --- 重なり集計ロジック ---
+        station_counts = {}
         for username, data in participants.items():
-            station_name = data.get("station")
-            pin_color = get_pin_color(username)
-            if station_name in STATION_COORDINATES:
-                x0, y0 = STATION_COORDINATES[station_name]
-                x = int(x0 * scale_x)
-                y = int(y0 * scale_y)
-                outline_radius = scaled_radius + outline_extra
-                draw.ellipse(
-                    (x - outline_radius, y - outline_radius, x + outline_radius, y + outline_radius),
-                    fill=(0, 0, 0),
-                    outline=(0, 0, 0)
-                )
-                draw.ellipse(
-                    (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
-                    fill=pin_color,
-                    outline=pin_color
-                )
+            st_name = data.get("station")
+            if st_name in STATION_COORDINATES:
+                if st_name not in station_counts:
+                    station_counts[st_name] = {"red": 0, "blue": 0}
+                
+                if get_pin_color(username) == "RED":
+                    station_counts[st_name]["red"] += 1
+                else:
+                    station_counts[st_name]["blue"] += 1
+
+        # --- 描画ループ ---
+        for st_name, counts in station_counts.items():
+            r_cnt = counts["red"]
+            b_cnt = counts["blue"]
+            
+            x0, y0 = STATION_COORDINATES[st_name]
+            x = int(x0 * scale_x)
+            y = int(y0 * scale_y)
+
+            label_text = ""
+            if r_cnt > 0 and b_cnt > 0:
+                # 違う色が被った場合: 紫ピン + (青-赤)
+                pin_color = PIN_COLOR_PURPLE
+                label_text = str(b_cnt - r_cnt)
+            elif r_cnt > 0:
+                # 赤のみ
+                pin_color = PIN_COLOR_RED
+                if r_cnt > 1: label_text = str(r_cnt) # 被った数
+            else:
+                # 青のみ
+                pin_color = PIN_COLOR_BLUE
+                if b_cnt > 1: label_text = str(b_cnt) # 被った数
+
+            # 外枠（黒）
+            outline_radius = scaled_radius + outline_extra
+            draw.ellipse(
+                (x - outline_radius, y - outline_radius, x + outline_radius, y + outline_radius),
+                fill=(0, 0, 0)
+            )
+            # 内側（指定色）
+            draw.ellipse(
+                (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
+                fill=pin_color
+            )
+
+            # テキスト（数字）描画
+            if label_text:
+                try:
+                    # デフォルトフォント使用
+                    font = ImageFont.load_default()
+                except:
+                    font = None
+                # ピンの右上に配置
+                draw.text((x + scaled_radius, y - scaled_radius * 2), label_text, fill=(0, 0, 0), font=font)
 
         out_buf = io.BytesIO()
         img.save(out_buf, format='PNG')
@@ -228,7 +257,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             unique_filename=True
         )
 
-        image_url = final_upload.get("secure_url") if final_upload else None
+        image_url = final_upload.get("secure_url")
 
         report_text = f"🚨 参加者 {len(participants)} 人分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
@@ -244,9 +273,6 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                     ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
                 ]
             )
-        elif image_url:
-            line_bot_api.push_message(chat_id, TextSendMessage(text=report_text))
-            line_bot_api.push_message(chat_id, ImageSendMessage(original_content_url=image_url, preview_image_url=image_url))
 
     except Exception as e:
         msg = f"エラー: 画像処理または送信で問題が発生しました: {e}"
