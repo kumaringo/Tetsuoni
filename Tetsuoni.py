@@ -4,7 +4,7 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageSendMessage
-from PIL import Image, ImageDraw, ImageFont # ImageFontを追加
+from PIL import Image, ImageDraw, ImageFont
 import cloudinary
 import cloudinary.uploader
 # station_data.py から STATION_COORDINATES をインポート
@@ -20,7 +20,7 @@ except ValueError:
 
 PIN_COLOR_RED = (255, 0, 0)
 PIN_COLOR_BLUE = (0, 0, 255)
-PIN_COLOR_PURPLE = (128, 0, 128) # 紫を追加
+PIN_COLOR_PURPLE = (128, 0, 128) # 混色用
 
 try:
     PIN_RADIUS = int(os.environ.get('PIN_RADIUS', '10'))
@@ -66,7 +66,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 participant_data = {}
 users_participated = {}
 
-def get_pin_color(username):
+def get_pin_color_key(username):
     if username in USER_GROUPS.get("RED_GROUP", []):
         return "RED"
     return "BLUE"
@@ -150,36 +150,27 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         orig_img = Image.open(orig_path).convert("RGBA")
         orig_w, orig_h = orig_img.size
 
-        # 透過 70% 処理
+        # 背景の透過・白背景化
         target_alpha = int(255 * 0.7)
         new_alpha = Image.new('L', orig_img.size, color=target_alpha)
         orig_img.putalpha(new_alpha)
-
         background = Image.new("RGBA", (orig_w, orig_h), (255, 255, 255, 255))
         background.paste(orig_img, (0, 0), orig_img)
         img = background
 
+        # Cloudinary ベース画像アップロード
         buf_base = io.BytesIO()
         img.save(buf_base, format='PNG')
         buf_base.seek(0)
-
         base_upload = cloudinary.uploader.upload(
-            buf_base,
-            resource_type="image",
-            folder="tetsuoni_maps",
-            use_filename=True,
-            unique_filename=False,
-            overwrite=True
+            buf_base, resource_type="image", folder="tetsuoni_maps",
+            use_filename=True, unique_filename=False, overwrite=True
         )
 
         uploaded_w = int(base_upload.get("width", orig_w))
         uploaded_h = int(base_upload.get("height", orig_h))
-
-        if (uploaded_w, uploaded_h) != (orig_w, orig_h):
-            img = img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
-        else:
-            img = img.copy()
-
+        img = img.resize((uploaded_w, uploaded_h), Image.LANCZOS)
+        
         draw = ImageDraw.Draw(img)
         scale_x = uploaded_w / orig_w
         scale_y = uploaded_h / orig_h
@@ -187,7 +178,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         scaled_radius = max(1, int(PIN_RADIUS * avg_scale))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * avg_scale))
 
-        # --- 重なり集計ロジック ---
+        # --- 各駅ごとの人数集計 ---
         station_counts = {}
         for username, data in participants.items():
             st_name = data.get("station")
@@ -195,12 +186,12 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                 if st_name not in station_counts:
                     station_counts[st_name] = {"red": 0, "blue": 0}
                 
-                if get_pin_color(username) == "RED":
+                if get_pin_color_key(username) == "RED":
                     station_counts[st_name]["red"] += 1
                 else:
                     station_counts[st_name]["blue"] += 1
 
-        # --- 描画ループ ---
+        # --- ピンとテキストの描画 ---
         for st_name, counts in station_counts.items():
             r_cnt = counts["red"]
             b_cnt = counts["blue"]
@@ -211,59 +202,49 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
 
             label_text = ""
             if r_cnt > 0 and b_cnt > 0:
-                # 違う色が被った場合: 紫ピン + (青-赤)
+                # 混色：紫ピン ＋ 「赤の数-青の数」
                 pin_color = PIN_COLOR_PURPLE
-                label_text = str(b_cnt - r_cnt)
+                label_text = f"{r_cnt}-{b_cnt}"
             elif r_cnt > 0:
-                # 赤のみ
+                # 赤チームのみ
                 pin_color = PIN_COLOR_RED
-                if r_cnt > 1: label_text = str(r_cnt) # 被った数
+                if r_cnt > 1: label_text = str(r_cnt)
             else:
-                # 青のみ
+                # 青チームのみ
                 pin_color = PIN_COLOR_BLUE
-                if b_cnt > 1: label_text = str(b_cnt) # 被った数
+                if b_cnt > 1: label_text = str(b_cnt)
 
             # 外枠（黒）
             outline_radius = scaled_radius + outline_extra
-            draw.ellipse(
-                (x - outline_radius, y - outline_radius, x + outline_radius, y + outline_radius),
-                fill=(0, 0, 0)
-            )
-            # 内側（指定色）
-            draw.ellipse(
-                (x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius),
-                fill=pin_color
-            )
+            draw.ellipse((x - outline_radius, y - outline_radius, x + outline_radius, y + outline_radius), fill=(0, 0, 0))
+            # ピン本体
+            draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
 
-            # テキスト（数字）描画
+            # テキスト（人数・比率）描画
             if label_text:
                 try:
-                    # デフォルトフォント使用
                     font = ImageFont.load_default()
                 except:
                     font = None
                 # ピンの右上に配置
                 draw.text((x + scaled_radius, y - scaled_radius * 2), label_text, fill=(0, 0, 0), font=font)
 
+        # 最終画像の保存・アップロード
         out_buf = io.BytesIO()
         img.save(out_buf, format='PNG')
         out_buf.seek(0)
-
         final_upload = cloudinary.uploader.upload(
-            out_buf,
-            resource_type="image",
-            folder="tetsuoni_maps",
-            use_filename=True,
-            unique_filename=True
+            out_buf, resource_type="image", folder="tetsuoni_maps",
+            use_filename=True, unique_filename=True
         )
 
         image_url = final_upload.get("secure_url")
 
+        # 結果報告メッセージ
         report_text = f"🚨 参加者 {len(participants)} 人分のデータが集まりました！ 🚨\n\n"
         for username, data in participants.items():
             is_red = username in USER_GROUPS.get("RED_GROUP", [])
-            group_color = "赤" if is_red else "青"
-            report_text += f"- {data.get('username')} ({group_color}G): {data.get('station')}\n"
+            report_text += f"- {username} ({'赤' if is_red else '青'}G): {data.get('station')}\n"
 
         if image_url and reply_token:
             line_bot_api.reply_message(
@@ -275,11 +256,9 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             )
 
     except Exception as e:
-        msg = f"エラー: 画像処理または送信で問題が発生しました: {e}"
+        msg = f"エラーが発生しました: {e}"
         if reply_token:
             line_bot_api.reply_message(reply_token, TextSendMessage(text=msg))
-        else:
-            line_bot_api.push_message(chat_id, TextSendMessage(text=msg))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
