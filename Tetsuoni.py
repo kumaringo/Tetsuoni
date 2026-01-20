@@ -36,7 +36,7 @@ except ValueError:
 USER_GROUPS = {
     "RED_GROUP": [
         "なりこう",
-        "小林礼旺",
+        "小林 礼旺",
         "川戸健裕",
         "上山of鉄オタ",
         "Bootaro",
