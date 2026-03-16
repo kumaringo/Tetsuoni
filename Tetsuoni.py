@@ -199,8 +199,29 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                           x + (scaled_radius + outline_extra), y + (scaled_radius + outline_extra)), fill=(0, 0, 0))
             draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
             
-            label_text = "\n".join([f"{u['team']}:{u['name']}" for u in users])
-            draw.text((x + scaled_radius + 5, y - scaled_radius), label_text, fill=(0, 0, 0), font=font)
+            # --- テキストの生成と描画（縁取り＆チーム別まとめ） ---
+            team_summary = {"赤": [], "青": [], "白": []}
+            for u in users:
+                team_summary[u['team']].append(u['name'][0]) # 1文字目のみ
+
+            display_lines = []
+            for t in ["赤", "青", "白"]:
+                if team_summary[t]:
+                    # 例：「赤:麻遠」
+                    line_txt = f"{t}:{ ''.join(team_summary[t]) }"
+                    display_lines.append((t, line_txt))
+
+            current_y = y - scaled_radius
+            for t_name, txt in display_lines:
+                text_color = TEAM_COLORS.get(t_name, (255, 255, 255))
+                text_pos = (x + scaled_radius + 5, current_y)
+                
+                # 縁取り描画（周囲8方向を黒で描画）
+                for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+                    draw.text((text_pos[0]+dx, text_pos[1]+dy), txt, fill=(0,0,0), font=font)
+                # 本体描画（チーム色）
+                draw.text(text_pos, txt, fill=text_color, font=font)
+                current_y += 14 # 改行幅
 
         # 3. 出力
         out_buf = io.BytesIO()
