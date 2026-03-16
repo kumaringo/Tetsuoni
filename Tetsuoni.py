@@ -35,15 +35,15 @@ USER_CONFIG = {
 TEAM_COLORS = {
     "赤": (255, 0, 0),
     "青": (0, 0, 255),
-    "白": (255, 255, 255),  # 真っ白に変更
-    "重複": (0, 0, 0)        # 同じ駅に複数人いる場合は黒
+    "白": (255, 255, 255),
+    "重複": (0, 0, 0)
 }
 
-# --- 基本設定（環境変数から取得） ---
+# --- 基本設定 ---
 try:
-    REQUIRED_USERS = int(os.environ.get('REQUIRED_USERS', '2'))
+    REQUIRED_USERS = int(os.environ.get('REQUIRED_USERS', '15'))
 except ValueError:
-    REQUIRED_USERS = 2
+    REQUIRED_USERS = 15
 
 PIN_RADIUS = 10
 PIN_OUTLINE_WIDTH = 2
@@ -82,8 +82,12 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip() if event.message and event.message.text else ""
-    if text.startswith('/'): return
+    
+    # 1. スラッシュで始まるメッセージは「完全に無視（無反応）」
+    if text.startswith('/'):
+        return
 
+    # 2. 以降、スラッシュがないメッセージはすべて反応対象
     if event.source.type == 'group':
         chat_id = event.source.group_id
     elif event.source.type == 'room':
@@ -107,33 +111,33 @@ def handle_message(event):
         participant_data[chat_id] = {}
         users_participated[chat_id] = set()
 
+    # 駅名リストに存在する場合
     if text in STATION_COORDINATES:
         is_update = username in users_participated[chat_id]
         participant_data[chat_id][username] = {"username": username, "station": text}
         users_participated[chat_id].add(username)
         current_count = len(users_participated[chat_id])
 
-        if is_update:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text=f'{username}さんの報告を「{text}」に更新しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
-            )
-            if current_count >= REQUIRED_USERS:
-                send_map_with_pins(chat_id, participant_data[chat_id], reply_token=None)
-                participant_data[chat_id] = {}; users_participated[chat_id] = set()
-            return
+        config = USER_CONFIG.get(username, {"team": "白", "real_name": username})
+        team = config["team"]
+        real_name = config["real_name"]
+        
+        status_line = "【報告更新】" if is_update else "【報告受理】"
+        reply_text = f"{status_line}\n名前: {real_name}\nチーム: {team}\n駅名: {text}\n現在: {current_count} / {REQUIRED_USERS} 人"
 
         if current_count >= REQUIRED_USERS:
             send_map_with_pins(chat_id, participant_data[chat_id], reply_token=event.reply_token)
-            participant_data[chat_id] = {}; users_participated[chat_id] = set()
+            participant_data[chat_id] = {}
+            users_participated[chat_id] = set()
         else:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
-            )
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    
+    # 駅名リストに存在しないが、スラッシュも付いていない場合
     else:
-        # 駅名が存在しない場合は無視、またはエラー通知
-        pass
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"「{text}」は駅名リストにありません。正しい駅名を報告してください。")
+        )
 
 def send_map_with_pins(chat_id, participants, reply_token=None):
     try:
@@ -147,7 +151,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         img = Image.new("RGBA", (orig_w, orig_h), (255, 255, 255, 255))
         img.paste(orig_img, (0, 0), orig_img)
 
-        # Cloudinary アップロードとリサイズ設定
+        # Cloudinary アップロード
         buf_base = io.BytesIO()
         img.save(buf_base, format='PNG')
         buf_base.seek(0)
@@ -162,20 +166,20 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         scaled_radius = max(1, int(PIN_RADIUS * ((scale_x + scale_y) / 2)))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * ((scale_x + scale_y) / 2)))
 
-        # --- フォント読み込み ---
+        # --- フォント読み込み（12pxに設定） ---
         font_path = os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansJP-Regular.ttf')
         try:
-            font = ImageFont.truetype(font_path, 22) # 少し大きめに設定
+            font = ImageFont.truetype(font_path, 12) 
         except:
             font = ImageFont.load_default()
 
-        # 1. データの集約（駅ごとにまとめる）
+        # 1. データの集約
         station_to_users = {}
         report_buckets = {"赤": [], "青": [], "白": []}
 
         for username, data in participants.items():
             st_name = data.get("station")
-            config = USER_CONFIG.get(username, {"team": "白", "real_name": "不明"})
+            config = USER_CONFIG.get(username, {"team": "白", "real_name": username})
             team = config["team"]
             real_name = config["real_name"]
             report_buckets[team].append(f"「{team}:{real_name}」: {st_name}")
@@ -189,16 +193,12 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         for st_name, users in station_to_users.items():
             x = int(STATION_COORDINATES[st_name][0] * scale_x)
             y = int(STATION_COORDINATES[st_name][1] * scale_y)
-
-            # 2人以上なら黒、1人ならチーム色
             pin_color = TEAM_COLORS["重複"] if len(users) > 1 else TEAM_COLORS.get(users[0]["team"], (255, 255, 255))
 
-            # ピン（外枠黒、中身ピン色）
             draw.ellipse((x - (scaled_radius + outline_extra), y - (scaled_radius + outline_extra), 
                           x + (scaled_radius + outline_extra), y + (scaled_radius + outline_extra)), fill=(0, 0, 0))
             draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
             
-            # 名前の表示（改行で縦に並べる）
             label_text = "\n".join([f"{u['team']}:{u['name']}" for u in users])
             draw.text((x + scaled_radius + 5, y - scaled_radius), label_text, fill=(0, 0, 0), font=font)
 
@@ -223,7 +223,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
 
     except Exception as e:
         if reply_token:
-            line_bot_api.reply_message(reply_token, TextSendMessage(text=f"エラー: {e}"))
+            line_bot_api.reply_message(reply_token, TextSendMessage(text=f"描画エラー: {e}"))
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
