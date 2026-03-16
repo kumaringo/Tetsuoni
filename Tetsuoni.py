@@ -15,12 +15,22 @@ app = Flask(__name__)
 # --- ユーザー設定 ---
 # LINE表示名をキーにして、チームと本名を紐付けます
 USER_CONFIG = {
-    "なりこう": {"team": "赤", "real_name": "成河"},
-    "小林 礼旺": {"team": "青", "real_name": "小林"},
-    "川戸健裕": {"team": "白", "real_name": "川戸"},
+    "麻生皐聖": {"team": "白", "real_name": "麻生"},
+    "伊藤隆": {"team": "赤", "real_name": "伊藤"},
     "上山of鉄オタ": {"team": "赤", "real_name": "上山"},
-    "Bootaro": {"team": "青", "real_name": "ブータロー"},
-    "麻生皐聖": {"team": "赤", "real_name": "麻生"},
+    "川戸健裕": {"team": "青", "real_name": "川戸"},
+    "小林礼旺": {"team": "赤", "real_name": "小林"},
+    "うp主": {"team": "青", "real_name": "佐久間"},
+    "茂人": {"team": "白", "real_name": "遠藤"},
+    "たかぎ": {"team": "白", "real_name": "高木"},
+    "村山　そう": {"team": "白", "real_name": "村山"},
+    "りゅう": {"team": "青", "real_name": "小澤"},
+    "Bootaro": {"team": "赤", "real_name": "仁田"},
+    "蒼真": {"team": "赤", "real_name": "工藤"},
+    "koki": {"team": "白", "real_name": "猪狩"},
+    "Null(教授)": {"team": "青", "real_name": "井原"},
+    "@ゆうき@": {"team": "青", "real_name": "二宮"},
+    
 }
 
 # チーム名と色の対応（RGB）
