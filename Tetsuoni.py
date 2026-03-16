@@ -187,7 +187,8 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             if st_name in STATION_COORDINATES:
                 if st_name not in station_to_users:
                     station_to_users[st_name] = []
-                station_to_users[st_name].append({"team": team, "name": real_name})
+                # ここで本名の1文字目を取得
+                station_to_users[st_name].append({"team": team, "char": real_name[0]})
 
         # 2. 描画
         for st_name, users in station_to_users.items():
@@ -199,10 +200,10 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                           x + (scaled_radius + outline_extra), y + (scaled_radius + outline_extra)), fill=(0, 0, 0))
             draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
             
-            # --- テキストの生成と描画（縁取り＆チーム別まとめ） ---
+            # --- テキストの生成（チームごとに1文字目を連結） ---
             team_summary = {"赤": [], "青": [], "白": []}
             for u in users:
-                team_summary[u['team']].append(u['name'][0]) # 1文字目のみ
+                team_summary[u['team']].append(u['char'])
 
             display_lines = []
             for t in ["赤", "青", "白"]:
@@ -211,17 +212,18 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                     line_txt = f"{t}:{ ''.join(team_summary[t]) }"
                     display_lines.append((t, line_txt))
 
+            # --- 縁取り描画（中身はチーム色） ---
             current_y = y - scaled_radius
             for t_name, txt in display_lines:
                 text_color = TEAM_COLORS.get(t_name, (255, 255, 255))
                 text_pos = (x + scaled_radius + 5, current_y)
                 
-                # 縁取り描画（周囲8方向を黒で描画）
+                # 縁取り（黒）
                 for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                     draw.text((text_pos[0]+dx, text_pos[1]+dy), txt, fill=(0,0,0), font=font)
-                # 本体描画（チーム色）
+                # 中身（チーム色）
                 draw.text(text_pos, txt, fill=text_color, font=font)
-                current_y += 14 # 改行幅
+                current_y += 14
 
         # 3. 出力
         out_buf = io.BytesIO()
@@ -245,6 +247,9 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
     except Exception as e:
         if reply_token:
             line_bot_api.reply_message(reply_token, TextSendMessage(text=f"描画エラー: {e}"))
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
