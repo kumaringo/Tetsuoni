@@ -13,7 +13,6 @@ from station_data import STATION_COORDINATES
 app = Flask(__name__)
 
 # --- ユーザー設定 ---
-# LINE表示名をキーにして、チームと本名を紐付けます
 USER_CONFIG = {
     "麻生皐聖": {"team": "白", "real_name": "麻生"},
     "伊藤隆": {"team": "赤", "real_name": "伊藤"},
@@ -30,14 +29,13 @@ USER_CONFIG = {
     "koki": {"team": "白", "real_name": "猪狩"},
     "Null(教授)": {"team": "青", "real_name": "井原"},
     "@ゆうき@": {"team": "青", "real_name": "二宮"},
-    
 }
 
 # チーム名と色の対応（RGB）
 TEAM_COLORS = {
     "赤": (255, 0, 0),
     "青": (0, 0, 255),
-    "白": (128, 128, 128),  # 白チームは灰色
+    "白": (255, 255, 255),  # 真っ白に変更
     "重複": (0, 0, 0)        # 同じ駅に複数人いる場合は黒
 }
 
@@ -47,15 +45,8 @@ try:
 except ValueError:
     REQUIRED_USERS = 2
 
-try:
-    PIN_RADIUS = int(os.environ.get('PIN_RADIUS', '10'))
-except ValueError:
-    PIN_RADIUS = 10
-
-try:
-    PIN_OUTLINE_WIDTH = int(os.environ.get('PIN_OUTLINE_WIDTH', '2'))
-except ValueError:
-    PIN_OUTLINE_WIDTH = 2
+PIN_RADIUS = 10
+PIN_OUTLINE_WIDTH = 2
 
 # LINE & Cloudinary 認証設定
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -74,7 +65,7 @@ cloudinary.config(
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# 状態保持用（チャットルーム単位）
+# 状態保持用
 participant_data = {}
 users_participated = {}
 
@@ -128,7 +119,7 @@ def handle_message(event):
                 TextSendMessage(text=f'{username}さんの報告を「{text}」に更新しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
             )
             if current_count >= REQUIRED_USERS:
-                send_map_with_pins(chat_id, participant_data[chat_id], reply_token=event.reply_token)
+                send_map_with_pins(chat_id, participant_data[chat_id], reply_token=None)
                 participant_data[chat_id] = {}; users_participated[chat_id] = set()
             return
 
@@ -141,10 +132,8 @@ def handle_message(event):
                 TextSendMessage(text=f'{username}さんが「{text}」を報告しました。\n現在 {current_count} 人 / {REQUIRED_USERS} 人')
             )
     else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f'「{text}」 はデータに存在しない駅名です。')
-        )
+        # 駅名が存在しない場合は無視、またはエラー通知
+        pass
 
 def send_map_with_pins(chat_id, participants, reply_token=None):
     try:
@@ -158,7 +147,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         img = Image.new("RGBA", (orig_w, orig_h), (255, 255, 255, 255))
         img.paste(orig_img, (0, 0), orig_img)
 
-        # Cloudinary ベース画像アップロード
+        # Cloudinary アップロードとリサイズ設定
         buf_base = io.BytesIO()
         img.save(buf_base, format='PNG')
         buf_base.seek(0)
@@ -173,15 +162,15 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         scaled_radius = max(1, int(PIN_RADIUS * ((scale_x + scale_y) / 2)))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * ((scale_x + scale_y) / 2)))
 
-        # 1. データの事前集計（重複チェック用）
-        station_counts = {}
-        for username, data in participants.items():
-            st = data.get("station")
-            if st in STATION_COORDINATES:
-                station_counts[st] = station_counts.get(st, 0) + 1
+        # --- フォント読み込み ---
+        font_path = os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansJP-Regular.ttf')
+        try:
+            font = ImageFont.truetype(font_path, 22) # 少し大きめに設定
+        except:
+            font = ImageFont.load_default()
 
-        # 2. 描画処理とテキストバケット
-        station_drawing_stack = {}
+        # 1. データの集約（駅ごとにまとめる）
+        station_to_users = {}
         report_buckets = {"赤": [], "青": [], "白": []}
 
         for username, data in participants.items():
@@ -189,56 +178,52 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
             config = USER_CONFIG.get(username, {"team": "白", "real_name": "不明"})
             team = config["team"]
             real_name = config["real_name"]
-
-            # テキスト報告用
             report_buckets[team].append(f"「{team}:{real_name}」: {st_name}")
 
             if st_name in STATION_COORDINATES:
-                # 重複している場合は黒、そうでなければチーム色
-                if station_counts[st_name] > 1:
-                    pin_color = TEAM_COLORS["重複"]
-                else:
-                    pin_color = TEAM_COLORS.get(team, (128, 128, 128))
+                if st_name not in station_to_users:
+                    station_to_users[st_name] = []
+                station_to_users[st_name].append({"team": team, "name": real_name})
 
-                # 重なり回避（縦並び）
-                stack_idx = station_drawing_stack.get(st_name, 0)
-                station_drawing_stack[st_name] = stack_idx + 1
-                
-                x = int(STATION_COORDINATES[st_name][0] * scale_x)
-                y = int(STATION_COORDINATES[st_name][1] * scale_y + stack_idx * (scaled_radius * 2 + 5))
+        # 2. 描画
+        for st_name, users in station_to_users.items():
+            x = int(STATION_COORDINATES[st_name][0] * scale_x)
+            y = int(STATION_COORDINATES[st_name][1] * scale_y)
 
-                # ピン描画
-                draw.ellipse((x - (scaled_radius + outline_extra), y - (scaled_radius + outline_extra), 
-                              x + (scaled_radius + outline_extra), y + (scaled_radius + outline_extra)), fill=(0, 0, 0))
-                draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
-                
-                # ラベル描画
-                label_text = f"{team}:{real_name[0]}"
-                try: font = ImageFont.load_default()
-                except: font = None
-                draw.text((x + scaled_radius + 5, y - scaled_radius), label_text, fill=(0, 0, 0), font=font)
+            # 2人以上なら黒、1人ならチーム色
+            pin_color = TEAM_COLORS["重複"] if len(users) > 1 else TEAM_COLORS.get(users[0]["team"], (255, 255, 255))
 
-        # 3. 画像出力
+            # ピン（外枠黒、中身ピン色）
+            draw.ellipse((x - (scaled_radius + outline_extra), y - (scaled_radius + outline_extra), 
+                          x + (scaled_radius + outline_extra), y + (scaled_radius + outline_extra)), fill=(0, 0, 0))
+            draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
+            
+            # 名前の表示（改行で縦に並べる）
+            label_text = "\n".join([f"{u['team']}:{u['name']}" for u in users])
+            draw.text((x + scaled_radius + 5, y - scaled_radius), label_text, fill=(0, 0, 0), font=font)
+
+        # 3. 出力
         out_buf = io.BytesIO()
         img.save(out_buf, format='PNG')
         out_buf.seek(0)
         final_upload = cloudinary.uploader.upload(out_buf, resource_type="image", folder="tetsuoni_maps")
         image_url = final_upload.get("secure_url")
 
-        # 4. メッセージ整理
         report_text = f"🚨 参加者 {len(participants)} 人のデータ 🚨\n"
         for t in ["赤", "青", "白"]:
             if report_buckets[t]:
                 report_text += "\n" + "\n".join(report_buckets[t])
 
-        if image_url and reply_token:
-            line_bot_api.reply_message(
-                reply_token,
-                [TextSendMessage(text=report_text.strip()), ImageSendMessage(image_url, image_url)]
-            )
+        if image_url:
+            msg = [TextSendMessage(text=report_text.strip()), ImageSendMessage(image_url, image_url)]
+            if reply_token:
+                line_bot_api.reply_message(reply_token, msg)
+            else:
+                line_bot_api.push_message(chat_id, msg)
 
     except Exception as e:
-        if reply_token: line_bot_api.reply_message(reply_token, TextSendMessage(text=f"エラー: {e}"))
+        if reply_token:
+            line_bot_api.reply_message(reply_token, TextSendMessage(text=f"エラー: {e}"))
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
