@@ -23,7 +23,7 @@ USER_CONFIG = {
     "茂人": {"team": "白", "real_name": "遠藤"},
     "たかぎ": {"team": "白", "real_name": "高木"},
     "村山　そう": {"team": "白", "real_name": "村山"},
-    "りゅう": {"team": "青", "real_name": "小澤"},
+    "りゅう": {"team": "青", "real_name": "澤澤"},
     "Bootaro": {"team": "赤", "real_name": "仁田"},
     "蒼真": {"team": "赤", "real_name": "工藤"},
     "koki": {"team": "白", "real_name": "猪狩"},
