@@ -32,9 +32,10 @@ USER_CONFIG = {
 }
 
 # チーム名と色の対応（RGB）
+# 青の値を (0, 0, 255) から 水色 (0, 191, 255) に変更
 TEAM_COLORS = {
     "赤": (255, 0, 0),
-    "青": (0, 0, 255),
+    "青": (0, 191, 255),
     "白": (255, 255, 255),
     "重複": (0, 0, 0)
 }
@@ -166,10 +167,10 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
         scaled_radius = max(1, int(PIN_RADIUS * ((scale_x + scale_y) / 2)))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * ((scale_x + scale_y) / 2)))
 
-        # --- フォント読み込み（12pxに設定） ---
+        # --- フォント読み込み（フォントサイズを 16 に変更） ---
         font_path = os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansJP-Regular.ttf')
         try:
-            font = ImageFont.truetype(font_path, 12) 
+            font = ImageFont.truetype(font_path, 16) 
         except:
             font = ImageFont.load_default()
 
@@ -223,7 +224,7 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
                     draw.text((text_pos[0]+dx, text_pos[1]+dy), txt, fill=(0,0,0), font=font)
                 # 中身（チーム色）
                 draw.text(text_pos, txt, fill=text_color, font=font)
-                current_y += 14
+                current_y += 18 # フォントサイズ拡大に合わせて行間も微調整
 
         # 3. 出力
         out_buf = io.BytesIO()
@@ -247,9 +248,6 @@ def send_map_with_pins(chat_id, participants, reply_token=None):
     except Exception as e:
         if reply_token:
             line_bot_api.reply_message(reply_token, TextSendMessage(text=f"描画エラー: {e}"))
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
