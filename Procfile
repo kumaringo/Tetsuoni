@@ -1,1 +1,1 @@
-web: gunicorn Tetsuoni:app
+web: gunicorn main:app
