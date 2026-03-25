@@ -32,16 +32,20 @@ def handle_registration_logic(event, line_bot_api, participant_data, users_parti
         users_participated[chat_id] = set()
 
     # 3. 駅名判定とデータ更新
-    if text in STATION_COORDINATES:
-        is_update = username in users_participated[chat_id]
-        participant_data[chat_id][username] = {"username": username, "station": text}
-        users_participated[chat_id].add(username)
-        current_count = len(users_participated[chat_id])
-        
-        config = USER_CONFIG.get(username, {"team": "白", "real_name": username})
-        team = config["team"]
-        real_name = config["real_name"]
-
+    if station_name == "パス":
+        # 座標を None として登録（カウントには含める）
+        participant_data[chat_id].append({"name": "パス", "coords": None})
+        users_participated.add(chat_id)
+    # --- ここまで追加 ---
+    
+    elif station_name in STATION_COORDINATES:
+        # 通常の駅登録処理
+        coords = STATION_COORDINATES[station_name]
+        participant_data[chat_id].append({"name": station_name, "coords": coords})
+        users_participated.add(chat_id)
+    else:
+        # 駅が見つからない場合（スルーまたはエラー返信）
+        return
         # --- ここからが「丸投げ」のための追加ロジック ---
 
         if current_count >= REQUIRED_USERS:
