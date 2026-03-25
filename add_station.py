@@ -1,6 +1,6 @@
 # add_station.py
 from linebot.models import TextSendMessage
-from STATION_DATA import STATION_COORDINATES # STATION_DATAからインポート
+from Sstation_data import STATION_COORDINATES # STATION_DATAからインポート
 from pin import send_map_with_pins
 
 def handle_registration_logic(event, line_bot_api, participant_data, users_participated, USER_CONFIG, REQUIRED_USERS):
