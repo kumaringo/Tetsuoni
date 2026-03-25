@@ -95,6 +95,7 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
             if st_name in STATION_COORDINATES:
                 if st_name not in station_to_users:
                     station_to_users[st_name] = []
+                    
                 # ここで本名の1文字目を取得
                 station_to_users[st_name].append({"team": team, "char": real_name[0]})
 
