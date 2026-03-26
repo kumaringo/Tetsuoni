@@ -1,7 +1,7 @@
 import requests
 
 def start_game_logic(event, line_bot_api):
-    gas_url = "https://script.google.com/macros/s/AKfycbw9Oq4m-B6qjJr3GEMoaeZTZE62K2eFr46WoEjWm7BQ920dOS2aMWndDFDXitVtBiqB/exec"
+    gas_url = "https://script.google.com/macros/s/AKfycbxr6lEjEcqMQ2yypcnBENH6mAMZMk09xHdT2P5bzm30HChIuJqCTE2xfzE5RHgMMNc/exec"
     
     try:
         # GASからスコアデータを取得
