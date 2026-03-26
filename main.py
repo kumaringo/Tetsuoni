@@ -2,7 +2,7 @@ import os
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage 
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 # 外部ファイルから必要なものだけを呼ぶ
 from add_station import handle_registration_logic
