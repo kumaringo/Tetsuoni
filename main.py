@@ -27,8 +27,6 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 participant_data = {}
 users_participated = {}
 
-#コマンド管理
-start_command = [False]
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -45,16 +43,11 @@ def handle_message(event):
     text = event.message.text.strip() if event.message and event.message.text else ""
     if text.startswith('/'):
         return
-    if text == "!start":
-        start_command[0] = True
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="受付を開始しました！駅名を送ってください。"))
-        return
 
     # すでに from add_station import handle_registration_logic しているので
     # ファイル名抜きの関数名だけで呼び出せます
     handle_registration_logic(
-        event, line_bot_api, participant_data, users_participated, USER_CONFIG, REQUIRED_USERS, start_command
-    )
+        event, line_bot_api, participant_data, users_participated, USER_CONFIG, REQUIRED_USERS)
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
