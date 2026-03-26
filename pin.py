@@ -35,7 +35,7 @@ def send_map_with_pins(chat_id, participant_data, line_bot_api, reply_token=None
     summary_text = f"🚨 参加者 {len(display_lines)} 人のデータ 🚨\n" + "\n".join(display_lines)
 
     # 2. 地図画像の生成（Pillow）
-    base_map_path = "map.png" # サーバー上の地図画像
+    base_map_path = "Rosenzu.PNG" # サーバー上の地図画像
     if not os.path.exists(base_map_path):
         line_bot_api.reply_message(reply_token, TextSendMessage(text="地図ファイルが見つかりません。"))
         return
