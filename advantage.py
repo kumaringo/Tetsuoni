@@ -1,11 +1,11 @@
-import requests
+ximport requests
 
 def start_game_logic(event, line_bot_api):
     gas_url = "https://script.google.com/macros/s/AKfycbw9Oq4m-B6qjJr3GEMoaeZTZE62K2eFr46WoEjWm7BQ920dOS2aMWndDFDXitVtBiqB/exec"
     
     try:
         # GASからスコアデータを取得
-        res = requests.get(gas_url, timeout=5).json()
+        res = requests.get(gas_url, timeout=0.2).json()
         
         red_score = res.get("red_score", 0)
         blue_score = res.get("blue_score", 0)
