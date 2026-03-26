@@ -2,4 +2,4 @@ line-bot-sdk
 flask
 requests
 pillow
-cloudinary  <-- これを追加！
+cloudinary
