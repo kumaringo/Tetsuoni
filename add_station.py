@@ -4,7 +4,7 @@ from pin import send_map_with_pins
 
 def handle_registration_logic(event, line_bot_api, participant_data, users_participated, USER_CONFIG, REQUIRED_USERS, start_command):
     text = event.message.text.strip() # ここで text として取得
-    if not start_command:
+    if not start_command[0]:
         return 
     
     # 1. チャットIDの取得
