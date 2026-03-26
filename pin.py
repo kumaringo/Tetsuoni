@@ -76,33 +76,62 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
         font_path = os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansJP-Regular.ttf')
         try:
             font = ImageFont.truetype(font_path, 16) 
+            pass_title_font = ImageFont.truetype(font_path, 18) # パス見出し用
         except:
             font = ImageFont.load_default()
+            pass_title_font = ImageFont.load_default()
 
         # 1. データの集約
         station_to_users = {}
         report_buckets = {"赤": [], "青": [], "白": []}
+        pass_members = {"赤": [], "青": [], "白": []} # パスした人用
 
         for username, data in participants.items():
             st_name = data.get("station")
-            
-            # --- 修正箇所: 駅名が None や空文字の場合はスキップ ---
             if not st_name:
                 continue
-            # -----------------------------------------------
 
             config = USER_CONFIG.get(username, {"team": "白", "real_name": username})
             team = config["team"]
             real_name = config["real_name"]
             report_buckets[team].append(f"「{team}:{real_name}」: {st_name}")
 
-            if st_name in STATION_COORDINATES:
+            # パスの場合はパスリストへ、駅の場合は駅リストへ
+            if st_name == "パス":
+                pass_members[team].append(real_name[0])
+            elif st_name in STATION_COORDINATES:
                 if st_name not in station_to_users:
                     station_to_users[st_name] = []
-                # 本名の1文字目を取得
                 station_to_users[st_name].append({"team": team, "char": real_name[0]})
 
         # 2. 描画
+        
+        # --- パスメンバーの描画（右上） ---
+        current_pass_y = 20
+        pass_x = uploaded_w - 180 # 右端から180pxの位置
+        
+        # パスメンバーがいる場合のみ見出しを表示
+        has_pass = any(pass_members.values())
+        if has_pass:
+            # 縁取り付きで見出し描画
+            txt_title = "【パス待機】"
+            for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+                draw.text((pass_x+dx, current_pass_y+dy), txt_title, fill=(0,0,0), font=pass_title_font)
+            draw.text((pass_x, current_pass_y), txt_title, fill=(255,255,255), font=pass_title_font)
+            current_pass_y += 25
+
+            for t_name in ["赤", "青", "白"]:
+                if pass_members[t_name]:
+                    txt = f"{t_name}:{ ''.join(pass_members[t_name]) }"
+                    text_color = TEAM_COLORS.get(t_name, (255, 255, 255))
+                    # 縁取り（黒）
+                    for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+                        draw.text((pass_x+dx, current_pass_y+dy), txt, fill=(0,0,0), font=font)
+                    # 中身（チーム色）
+                    draw.text((pass_x, current_pass_y), txt, fill=text_color, font=font)
+                    current_pass_y += 20
+
+        # --- 駅ピンの描画 ---
         for st_name, users in station_to_users.items():
             x = int(STATION_COORDINATES[st_name][0] * scale_x)
             y = int(STATION_COORDINATES[st_name][1] * scale_y)
@@ -112,7 +141,6 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
                           x + (scaled_radius + outline_extra), y + (scaled_radius + outline_extra)), fill=(0, 0, 0))
             draw.ellipse((x - scaled_radius, y - scaled_radius, x + scaled_radius, y + scaled_radius), fill=pin_color)
             
-            # --- テキストの生成（チームごとに1文字目を連結） ---
             team_summary = {"赤": [], "青": [], "白": []}
             for u in users:
                 team_summary[u['team']].append(u['char'])
@@ -123,16 +151,12 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
                     line_txt = f"{t}:{ ''.join(team_summary[t]) }"
                     display_lines.append((t, line_txt))
 
-            # --- 縁取り描画（中身はチーム色） ---
             current_y = y - scaled_radius
             for t_name, txt in display_lines:
                 text_color = TEAM_COLORS.get(t_name, (255, 255, 255))
                 text_pos = (x + scaled_radius + 5, current_y)
-                
-                # 縁取り（黒）
                 for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                     draw.text((text_pos[0]+dx, text_pos[1]+dy), txt, fill=(0,0,0), font=font)
-                # 中身（チーム色）
                 draw.text(text_pos, txt, fill=text_color, font=font)
                 current_y += 18 
 
