@@ -1,12 +1,10 @@
 import os
 import io
-from PIL import Image, ImageDraw, ImageFont  # ImageDraw, ImageFontを追加
+from PIL import Image, ImageDraw, ImageFont
 import cloudinary
-import cloudinary.uploader                   # インポート追加
+import cloudinary.uploader
 from linebot.models import TextSendMessage, ImageSendMessage
 from station_data import STATION_COORDINATES
-
-
 
 USER_CONFIG = {
     "麻生皐聖": {"team": "白", "real_name": "麻生"},
@@ -74,7 +72,7 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
         scaled_radius = max(1, int(PIN_RADIUS * ((scale_x + scale_y) / 2)))
         outline_extra = max(1, int(PIN_OUTLINE_WIDTH * ((scale_x + scale_y) / 2)))
 
-        # --- フォント読み込み（フォントサイズを 16 に変更） ---
+        # --- フォント読み込み ---
         font_path = os.path.join(os.path.dirname(__file__), 'fonts', 'NotoSansJP-Regular.ttf')
         try:
             font = ImageFont.truetype(font_path, 16) 
@@ -87,6 +85,12 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
 
         for username, data in participants.items():
             st_name = data.get("station")
+            
+            # --- 修正箇所: 駅名が None や空文字の場合はスキップ ---
+            if not st_name:
+                continue
+            # -----------------------------------------------
+
             config = USER_CONFIG.get(username, {"team": "白", "real_name": username})
             team = config["team"]
             real_name = config["real_name"]
@@ -95,7 +99,7 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
             if st_name in STATION_COORDINATES:
                 if st_name not in station_to_users:
                     station_to_users[st_name] = []
-                # ここで本名の1文字目を取得
+                # 本名の1文字目を取得
                 station_to_users[st_name].append({"team": team, "char": real_name[0]})
 
         # 2. 描画
@@ -116,7 +120,6 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
             display_lines = []
             for t in ["赤", "青", "白"]:
                 if team_summary[t]:
-                    # 例：「赤:麻遠」
                     line_txt = f"{t}:{ ''.join(team_summary[t]) }"
                     display_lines.append((t, line_txt))
 
@@ -131,7 +134,7 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
                     draw.text((text_pos[0]+dx, text_pos[1]+dy), txt, fill=(0,0,0), font=font)
                 # 中身（チーム色）
                 draw.text(text_pos, txt, fill=text_color, font=font)
-                current_y += 18 # フォントサイズ拡大に合わせて行間も微調整
+                current_y += 18 
 
         # 3. 出力
         out_buf = io.BytesIO()
@@ -140,7 +143,7 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
         final_upload = cloudinary.uploader.upload(out_buf, resource_type="image", folder="tetsuoni_maps")
         image_url = final_upload.get("secure_url")
 
-        report_text = f"🚨 参加者 {len(participants)} 人のデータ 🚨\n"
+        report_text = f"🚨 参加者 {len(report_buckets['赤']) + len(report_buckets['青']) + len(report_buckets['白'])} 人のデータ 🚨\n"
         for t in ["赤", "青", "白"]:
             if report_buckets[t]:
                 report_text += "\n" + "\n".join(report_buckets[t])
@@ -155,4 +158,3 @@ def send_map_with_pins(chat_id, participants, line_bot_api, reply_token=None):
     except Exception as e:
         if reply_token:
             line_bot_api.reply_message(reply_token, TextSendMessage(text=f"描画エラー: {e}"))
-
