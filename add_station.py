@@ -2,8 +2,10 @@ from linebot.models import TextSendMessage
 from station_data import STATION_COORDINATES
 from pin import send_map_with_pins
 
-def handle_registration_logic(event, line_bot_api, participant_data, users_participated, USER_CONFIG, REQUIRED_USERS):
+def handle_registration_logic(event, line_bot_api, participant_data, users_participated, USER_CONFIG, REQUIRED_USERS, start_command):
     text = event.message.text.strip() # ここで text として取得
+    if not start_command:
+        return 
     
     # 1. チャットIDの取得
     if event.source.type == 'group':
@@ -56,6 +58,9 @@ def handle_registration_logic(event, line_bot_api, participant_data, users_parti
     current_count = len(users_participated[chat_id])
 
     if current_count >= REQUIRED_USERS:
+
+        start_command[0] = False
+        
         # 地図送信
         send_map_with_pins(
             chat_id, 
