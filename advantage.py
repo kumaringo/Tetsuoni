@@ -7,11 +7,13 @@ def start_game_logic(event, line_bot_api):
         # GASからスコアデータを取得
         res = requests.get(gas_url).json()
         
-        red_score = res.get("red_score", 0)
-        blue_score = res.get("blue_score", 0)
-        white_score = res.get("white_score", 0)
+        # 1. 取得した値を数値(int)に変換しつつ、指定の点数を加算する
+        # もし値が空なら0として扱い、そこに点数を足す方針です
+        red_score = int(res.get("red_score", 0)) + 92
+        blue_score = int(res.get("blue_score", 0)) + 58
+        white_score = int(res.get("white_score", 0)) + 38
         
-        # スコア辞書を作成
+        # スコア辞書を作成（ここからは加算後のスコアが使われる）
         score_dict = {
             "赤": red_score,
             "青": blue_score,
@@ -50,5 +52,4 @@ def start_game_logic(event, line_bot_api):
 
     except Exception as e:
         print(f"GAS取得エラー: {e}")
-        # エラー時はパス枠なしで開始
-        return "スコア取得に失敗しましたが、受付を開始します！", 0, []
+        return "スコア取得に失敗しましたが、受付を開始します。", 0, []
