@@ -12,7 +12,7 @@ USER_CONFIG = {
     "しみチョコ〜にわとり〜": {"team": "赤", "real_name": "清水"},
 
     "坂本　大和": {"team": "青", "real_name": "坂本"},
-    "OR(209推し)": {"team": "青", "real_name": "大塚"},
+    "OR（209推し）": {"team": "青", "real_name": "大塚"},
     
     "Ryu": {"team": "白", "real_name": "岡"},
     "𝒩𝒶𝓃𝒷𝒶𝓇𝒶": {"team": "白", "real_name": "南原"},
