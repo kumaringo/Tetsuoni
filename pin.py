@@ -15,7 +15,7 @@ USER_CONFIG = {
     "OR推し": {"team": "青", "real_name": "大塚"},
     
     "Ryu": {"team": "白", "real_name": "岡"},
-    "Nankara": {"team": "白", "real_name": "南原"},
+    "𝒩𝒶𝓃𝒷𝒶𝓇𝒶": {"team": "白", "real_name": "南原"},
     
 }
 
