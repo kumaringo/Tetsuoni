@@ -7,21 +7,16 @@ from linebot.models import TextSendMessage, ImageSendMessage
 from station_data import STATION_COORDINATES
 
 USER_CONFIG = {
-    "麻生皐聖": {"team": "白", "real_name": "麻生"},
-    "伊藤隆": {"team": "赤", "real_name": "伊藤"},
     "上山of鉄オタ": {"team": "赤", "real_name": "上山"},
-    "川戸健裕": {"team": "青", "real_name": "川戸"},
-    "小林礼旺": {"team": "赤", "real_name": "小林"},
-    "うp主": {"team": "青", "real_name": "佐久間"},
-    "茂人": {"team": "白", "real_name": "遠藤"},
-    "たかぎ": {"team": "白", "real_name": "高木"},
-    "村山　そう": {"team": "白", "real_name": "村山"},
-    "りゅう": {"team": "青", "real_name": "澤澤"},
-    "Bootaro": {"team": "赤", "real_name": "仁田"},
-    "蒼真": {"team": "赤", "real_name": "工藤"},
-    "koki": {"team": "白", "real_name": "猪狩"},
-    "Null(教授)": {"team": "青", "real_name": "井原"},
-    "@ゆうき@": {"team": "青", "real_name": "二宮"},
+    "SKM交通": {"team": "赤", "real_name": "佐久間"},
+    "しみチョコ〜にわとり〜": {"team": "赤", "real_name": "清水"},
+
+    "坂本　大和": {"team": "青", "real_name": "坂本"},
+    "OR推し": {"team": "青", "real_name": "大塚"},
+    
+    "Ryu": {"team": "白", "real_name": "岡"},
+    "Nankara": {"team": "白", "real_name": "南原"},
+    
 }
 
 TEAM_COLORS = {
