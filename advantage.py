@@ -2,7 +2,8 @@ import requests
 
 def start_game_logic(event, line_bot_api):
     # 【重要】新しくデプロイして発行されたURLに貼り替えてください
-    gas_url = "https://script.google.com/macros/s/AKfycby3NrsqlzHftyw9NdKa1mZ3UrJSRsnSMqDSWmnxsOn4DElSPefxVWdNIgCJ5DVc5jJg/exec"
+    #もし点数を参照するならこのurlを有効にしてください
+    # gas_url = "https://script.google.com/macros/s/AKfycby3NrsqlzHftyw9NdKa1mZ3UrJSRsnSMqDSWmnxsOn4DElSPefxVWdNIgCJ5DVc5jJg/exec"
     
     try:
         # GASから集計データを取得
