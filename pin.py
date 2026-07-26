@@ -8,14 +8,14 @@ from station_data import STATION_COORDINATES
 
 USER_CONFIG = {
     "上山of鉄オタ": {"team": "赤", "real_name": "上山"},
-    "SKM交通": {"team": "赤", "real_name": "佐久間"},
+    "SKM交通": {"team": "白", "real_name": "佐久間"},
     "しみチョコ〜にわとり〜": {"team": "赤", "real_name": "清水"},
 
     "坂本　大和": {"team": "青", "real_name": "坂本"},
     "OR（209推し）": {"team": "青", "real_name": "大塚"},
     
     "Ryu": {"team": "白", "real_name": "岡"},
-    "𝒩𝒶𝓃𝒷𝒶𝓇𝒶": {"team": "白", "real_name": "南原"},
+    
     
 }
 
